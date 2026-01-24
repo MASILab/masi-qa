@@ -63,7 +63,6 @@ def create_json_dict(filepaths):
     """
 
     #user = os.getlogin()
-    date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     nested_d = {}
     for png in tqdm(filepaths):
         #current_d = nested_d
@@ -73,7 +72,7 @@ def create_json_dict(filepaths):
         #    if tag:
         #        current_d = current_d.setdefault(tag, {})
         ##set the default values
-        row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'date': date}
+        row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'date': '', 'duration': 0}
         #current_d.update(row)
         #current_d = nested_d
         nested_d[png] = row
@@ -99,7 +98,8 @@ def get_tag_type(d):
 
 def get_leaf_dicts(d, path=None, curr_dict=None):
     """
-    Given a nested json dictionary, return a list of the leaf dictionaries
+    Given a json dictionary, return a list of the leaf dictionaries.
+    Handles both flat structure (filename -> entry) and nested BIDS structure.
     """
     if path is None:
         path = []
@@ -107,6 +107,15 @@ def get_leaf_dicts(d, path=None, curr_dict=None):
         curr_dict = {}
     leaf_dicts = []
 
+    # Check if this is a flat structure (values have 'QA_status' key)
+    first_value = next(iter(d.values()), None)
+    if isinstance(first_value, dict) and 'QA_status' in first_value:
+        # Flat structure: each value is already a leaf dict
+        for key, value in d.items():
+            leaf_dicts.append(([key], value))
+        return leaf_dicts
+
+    # Original nested BIDS structure handling
     nested_keys = {}
     leaf_keys = {}
     for key, value in d.items():
@@ -121,11 +130,11 @@ def get_leaf_dicts(d, path=None, curr_dict=None):
         curr_dict[get_tag_type(nested_key)] = nested_key
 
         leaf_dicts.extend(get_leaf_dicts(nested_value, new_path, curr_dict))
-    
+
     for leaf_key, (leaf_value, leaf_dict) in leaf_keys.items():
         leaf_dicts.append((path, leaf_dict))
         break
-        
+
     return leaf_dicts
 
 def set_file_permissions(file_path, group_name='p_masi', permissions=0o775):
@@ -163,7 +172,7 @@ def convert_json_to_csv(json_dict, pipeline_path, permissions=False):
     # leaf_dicts = [ds for paths,ds in leaf_dicts]
     # #finally, convert to a csv
     # #header = ['sub', 'ses', 'acq', 'run', 'QA_status', 'reason', 'user', 'date']
-    header = ['filename', 'QA_status', 'reason', 'date']
+    header = ['filename', 'QA_status', 'reason', 'date', 'duration']
     df = pd.DataFrame(json_dict).T
     #reorder the columns accroding to the header
     print(df.columns)
@@ -288,7 +297,6 @@ def check_json_for_png(nested, pngs):
     """
 
     #user = os.getlogin()
-    date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     keys = nested.keys()
     for png in pngs:
         # tags = get_BIDS_fields_from_png(png)
@@ -303,11 +311,11 @@ def check_json_for_png(nested, pngs):
         #             current_d = current_d.setdefault(tag, {})
         if png not in keys: #we need to add the png
         #if current_d is blank, then we need to add the default values
-            row = {'filename':str(png), 'QA_status': 'yes', 'reason': '', 'date': date}
+            row = {'filename':str(png), 'QA_status': 'yes', 'reason': '', 'date': '', 'duration': 0}
             #current_d.update(row)
             nested[png] = row
             #current_d.update(tags)
-    
+
     return nested
 
 def assert_valid_qa_status(dict_list):
