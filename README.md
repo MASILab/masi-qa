@@ -13,6 +13,7 @@ This is the BIDS-agnostic version of [ADSP_AutoQA](https://github.com/MASILab/AD
 - Automatic tracking of review timestamps and duration
 - Persistent storage via JSON with CSV export
 - Autoplay mode for rapid image cycling
+- Quick navigation: jump to specific image or next unreviewed
 
 ## Installation
 
@@ -75,8 +76,14 @@ Each pipeline directory should contain PNG files only.
 | `Q` | Mark as "Yes" (pass) |
 | `W` | Mark as "No" (fail) |
 | `E` | Mark as "Maybe" (uncertain) |
+| `N` | Jump to next unreviewed image |
 | `Space` | Toggle autoplay mode |
 | `Enter` | Focus/unfocus reason input field |
+
+### Quick Navigation
+
+- **Go to specific image**: Use the "Go to #" input field next to the image counter and press Enter
+- **Next unreviewed**: Press `N` to skip already-reviewed images and jump to the next one that hasn't been reviewed yet
 
 ## QA Data Format
 

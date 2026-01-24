@@ -76,12 +76,17 @@ Install via: `pip install masi-qa`
 
 ## Keyboard Shortcuts (montage.html)
 
-- Arrow Left/Right: Navigate images
+- Arrow Left/Right: Navigate images (one at a time)
 - Q: Mark "Yes"
 - W: Mark "No"
 - E: Mark "Maybe"
+- N: Jump to next unreviewed image
 - Space: Toggle autoplay
 - Enter: Focus/unfocus reason input
+
+**Quick Navigation:**
+- Use the "Go to #" input field to jump directly to a specific image number
+- Press N to skip reviewed images and jump to the next unreviewed one
 
 ## Important Operational Notes
 

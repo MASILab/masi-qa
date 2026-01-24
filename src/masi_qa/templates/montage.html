@@ -136,6 +136,41 @@
         .btn-back:hover {
             background-color: #f57c00;
         }
+
+        /* Navigation controls */
+        .navigation-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        #jumpInput {
+            width: 80px;
+            padding: 6px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        #jumpInput:focus {
+            outline: none;
+            border-color: #1565c0;
+        }
+        #jumpInput.invalid {
+            border-color: #f44336;
+            background-color: #ffebee;
+        }
+        .btn-nav {
+            padding: 6px 12px;
+            background-color: #1565c0;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .btn-nav:hover {
+            background-color: #0d47a1;
+        }
     </style>
 </head>
 <body>
@@ -154,7 +189,13 @@
     </div>
 
     <div id="imageMontage"></div>
-    <div id="counter" class="counter">0/0</div>
+    <div class="navigation-controls">
+        <span id="counter" class="counter">0/0</span>
+        <input type="number" id="jumpInput" min="1" placeholder="Go to #"
+               onfocus="isInputFocused=true" onblur="isInputFocused=false"
+               onkeydown="if(event.key==='Enter'){jumpToImageFromInput(); event.preventDefault();}">
+        <button class="btn-nav" onclick="jumpToNextUnreviewed()">Next Unreviewed (N)</button>
+    </div>
     <div class="loading-bar-container">
         <div id="loadingBar" class="loading-bar-progress"></div>
     </div>
@@ -471,6 +512,9 @@
                             button.click();
                         }
                         break;
+                    case 'KeyN':
+                        jumpToNextUnreviewed();
+                        break;
                     default:
                         break;
                 }
@@ -645,6 +689,96 @@
             //console.log('Formatted Date and Time:', formattedDate);
 
             // console.log('Username:', '{{ user }}');
+        }
+
+        // Function to save current image state (extracted for reuse)
+        async function saveCurrentImageState() {
+            const qaButtons = document.querySelectorAll('.qa-button');
+            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
+            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
+            const reasonInputValue = document.querySelector('.reason-input')?.value || '';
+
+            const imagePath = imagePaths[currentImageIndex];
+            const imageName = imagePath.split('/').pop();
+            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
+            const qaDict = getLeafDict(nestedDict, bidsFields);
+
+            // Calculate duration spent on this image
+            const viewDuration = imageViewStartTime ? Math.round((Date.now() - imageViewStartTime) / 1000) : 0;
+
+            // Update the dictionary
+            qaDict['date'] = getDateTime();
+            qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            qaDict['QA_status'] = qaStatus;
+            qaDict['reason'] = reasonInputValue;
+
+            // Push to server
+            try {
+                const response = await fetch('/update_qa_dict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(nestedDict)
+                });
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                console.log('Saved QA state:', data);
+            } catch (error) {
+                console.error('Error saving QA state:', error);
+            }
+        }
+
+        // Function to jump to a specific image number (1-based)
+        async function jumpToImage(targetNumber) {
+            const index = parseInt(targetNumber) - 1;  // Convert 1-based to 0-based
+            if (isNaN(index) || index < 0 || index >= imagePaths.length) {
+                return false;  // Invalid number
+            }
+            if (index === currentImageIndex) {
+                return true;  // Already at this image
+            }
+            await saveCurrentImageState();
+            currentImageIndex = index;
+            initializeMontage();
+            return true;
+        }
+
+        // Function to handle jump input field
+        async function jumpToImageFromInput() {
+            const input = document.getElementById('jumpInput');
+            const value = input.value.trim();
+            if (!value) return;
+
+            const success = await jumpToImage(value);
+            if (!success) {
+                input.classList.add('invalid');
+                setTimeout(() => input.classList.remove('invalid'), 500);
+            }
+            input.value = '';
+            input.blur();
+        }
+
+        // Function to jump to the next unreviewed image
+        async function jumpToNextUnreviewed() {
+            const total = imagePaths.length;
+            for (let i = 1; i <= total; i++) {
+                const checkIndex = (currentImageIndex + i) % total;
+                const imagePath = imagePaths[checkIndex];
+                const imageName = imagePath.split('/').pop();
+                const bidsFields = getBIDSFieldsFromPNG(imageName, false);
+                const qaDict = getLeafDict(nestedDict, bidsFields);
+
+                // Check if unreviewed (empty or missing date field)
+                if (!qaDict['date'] || qaDict['date'] === '') {
+                    await saveCurrentImageState();
+                    currentImageIndex = checkIndex;
+                    initializeMontage();
+                    return;
+                }
+            }
+            // All images have been reviewed
+            console.log('All images have been reviewed');
         }
 
         // Function to save current QA state and navigate back to selection
