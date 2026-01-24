@@ -136,7 +136,7 @@ If you use this software in your research, please cite:
 
 ## License
 
-MIT License - Copyright (c) 2024 MASI Lab @ Vanderbilt
+MIT License - Copyright (c) 2024-2026 MASI Lab @ Vanderbilt
 
 See [LICENSE](LICENSE) for details.
 
