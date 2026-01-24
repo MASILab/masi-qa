@@ -2,7 +2,11 @@
 
 A Flask-based web application for reviewing and annotating medical QA images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data.
 
-This is the BIDS-agnostic version of [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA).
+This is the BIDS-agnostic version of [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA). Please visit this page for in-depth instructions on usage.
+
+If you use this for your research, please cite the following paper:
+
+Kim, Michael E., et al. "Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets." PLOS One (2025).
 
 ## Features
 
