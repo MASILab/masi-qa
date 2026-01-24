@@ -55,10 +55,14 @@ Install via: `pip install -r requirements.txt`
     "filename": "filename.png",
     "QA_status": "yes",
     "reason": "",
-    "date": "2024-07-10 00:09:13"
+    "date": "2024-07-10 00:09:13",
+    "duration": 45
   }
 }
 ```
+
+- `date`: Timestamp when user last reviewed the image (empty until reviewed)
+- `duration`: Total seconds spent viewing the image (accumulates across views)
 
 ## Expected Directory Structure
 

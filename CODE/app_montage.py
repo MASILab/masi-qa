@@ -5,9 +5,10 @@ Email: michael.kim@vanderbilt.edu
 Date: July 11, 2024
 """
 
-from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file
+from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
 import os, json, io, argparse, re, grp
+from functools import wraps
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
@@ -23,7 +24,8 @@ def pa():
     The updated CSV will be saved to the specified save path as updates are made.
 
 """)
-    parser.add_argument('QA_directory', type=str, help='path to QA directory')
+    parser.add_argument('QA_directory', type=str, nargs='?', default=None,
+                        help='path to QA directory (optional - can be set via web interface)')
     parser.add_argument('--debug', action='store_true', help='enable debug mode')
 
     return parser.parse_args()
@@ -33,13 +35,49 @@ app.secret_key = 'supersecretkey'
 
 args = pa()
 
-QA_directory_abs = args.QA_directory
+# Validate command-line QA_directory if provided
+if args.QA_directory:
+    assert os.path.isabs(args.QA_directory), "The QA directory path must be an absolute path."
+    assert os.path.exists(args.QA_directory), "The QA directory path does not exist."
 
-#assert that the QA directory is an absolute path that exists
-assert os.path.isabs(QA_directory_abs), "The QA directory path must be an absolute path."
-assert os.path.exists(QA_directory_abs), "The QA directory path does not exist."
+def get_qa_directory():
+    """Get QA directory from session, falling back to command-line arg."""
+    if 'qa_directory' in session:
+        return session['qa_directory']
+    if args.QA_directory:
+        return args.QA_directory
+    return None
 
-QA_directory = QA_directory_abs
+def validate_directory(path):
+    """Validate that a path is an absolute, existing, accessible directory."""
+    errors = []
+    if not path:
+        errors.append("Path cannot be empty")
+        return False, errors
+    if not os.path.isabs(path):
+        errors.append("Path must be an absolute path (starting with /)")
+    if not os.path.exists(path):
+        errors.append("Path does not exist")
+    elif not os.path.isdir(path):
+        errors.append("Path is not a directory")
+    elif not os.access(path, os.R_OK):
+        errors.append("Path is not readable")
+    return len(errors) == 0, errors
+
+def require_qa_directory(f):
+    """Decorator to ensure QA directory is set before accessing route."""
+    @wraps(f)
+    def decorated_function(*args_inner, **kwargs):
+        qa_dir = get_qa_directory()
+        if not qa_dir:
+            return redirect(url_for('select_root'))
+        valid, errors = validate_directory(qa_dir)
+        if not valid:
+            session.pop('qa_directory', None)
+            flash(f"Directory is no longer valid: {'; '.join(errors)}", 'error')
+            return redirect(url_for('select_root'))
+        return f(*args_inner, **kwargs)
+    return decorated_function
 
 
 def get_BIDS_fields_from_png(filename, return_pipeline=False):
@@ -339,35 +377,141 @@ def save_json_file(path, dict, permissions=False):
     if permissions:
         set_file_permissions(path)
 
+@app.route('/select-root', methods=['GET'])
+def select_root():
+    """Redirect to main page which now includes root directory selection."""
+    return redirect(url_for('index'))
+
+@app.route('/select-root', methods=['POST'])
+def set_root():
+    """Set the QA root directory from user input."""
+    path = request.form.get('qa_directory', '').strip()
+    valid, errors = validate_directory(path)
+    if not valid:
+        for error in errors:
+            flash(error, 'error')
+        return redirect(url_for('index'))
+    session['qa_directory'] = path
+    flash(f"QA directory set to: {path}", 'success')
+    return redirect(url_for('index'))
+
+@app.route('/clear-root', methods=['POST'])
+def clear_root():
+    """Clear the current QA directory and return to selector."""
+    session.pop('qa_directory', None)
+    flash("QA directory cleared", 'info')
+    return redirect(url_for('select_root'))
+
+@app.route('/set-root-ajax', methods=['POST'])
+def set_root_ajax():
+    """AJAX endpoint to set the QA root directory without redirect."""
+    data = request.get_json()
+    path = data.get('path', '').strip()
+    valid, errors = validate_directory(path)
+    if not valid:
+        return jsonify({'success': False, 'errors': errors}), 400
+    session['qa_directory'] = path
+    return jsonify({'success': True, 'path': path})
+
+@app.route('/validate-path', methods=['POST'])
+def validate_path_route():
+    """AJAX endpoint for real-time path validation."""
+    data = request.get_json()
+    path = data.get('path', '').strip()
+    valid, errors = validate_directory(path)
+    subdir_count = 0
+    if valid:
+        subdirs = [x for x in Path(path).glob('*') if x.is_dir()]
+        subdir_count = len(subdirs)
+    return jsonify({'valid': valid, 'errors': errors, 'subdir_count': subdir_count})
+
+@app.route('/browse-path', methods=['POST'])
+def browse_path():
+    """AJAX endpoint for browsing server directories."""
+    data = request.get_json()
+    path = data.get('path', '/').strip()
+
+    # Default to home directory or root
+    if not path:
+        path = os.path.expanduser('~')
+
+    # Normalize the path
+    path = os.path.normpath(path)
+
+    # Check if path exists and is accessible
+    if not os.path.exists(path):
+        return jsonify({'error': 'Path does not exist', 'path': path}), 400
+    if not os.path.isdir(path):
+        return jsonify({'error': 'Path is not a directory', 'path': path}), 400
+    if not os.access(path, os.R_OK):
+        return jsonify({'error': 'Path is not readable', 'path': path}), 403
+
+    # Get list of subdirectories
+    try:
+        entries = []
+        for entry in sorted(os.listdir(path)):
+            full_path = os.path.join(path, entry)
+            if os.path.isdir(full_path):
+                # Check if we can read this directory
+                readable = os.access(full_path, os.R_OK)
+                entries.append({
+                    'name': entry,
+                    'path': full_path,
+                    'readable': readable
+                })
+
+        # Build breadcrumb parts
+        parts = []
+        current = path
+        while current != os.path.dirname(current):  # Stop at root
+            parts.append({'name': os.path.basename(current) or current, 'path': current})
+            current = os.path.dirname(current)
+        if current:  # Add root
+            parts.append({'name': current, 'path': current})
+        parts.reverse()
+
+        return jsonify({
+            'current_path': path,
+            'parent_path': os.path.dirname(path) if path != '/' else None,
+            'breadcrumbs': parts,
+            'directories': entries
+        })
+    except PermissionError:
+        return jsonify({'error': 'Permission denied', 'path': path}), 403
+
 @app.route('/')
 def index():
-    datasets = [ x for x in Path(QA_directory).glob('*') if x.is_dir() ]
-    datasets = sorted(datasets, key=lambda x: x.name)
-    datasets = [ x.name for x in datasets ]
+    qa_directory = get_qa_directory()
+    # Pass qa_directory to template (may be None if not set)
     if args.debug:
-        print("Datasets:", datasets)
-    return render_template('root.html', datasets=datasets)
+        print("QA Directory:", qa_directory)
+    return render_template('root.html', qa_directory=qa_directory)
 
 @app.route('/datasets', methods=['POST'])
+@require_qa_directory
 def load_datasets():
+    qa_directory = get_qa_directory()
     data = request.get_json()
     path = data.get('path')
 
     # Here you can customize what datasets to show for the selected path
     # For simplicity, I'll assume you fetch directories in a similar manner
-    datasets = sorted([str(x.name) for x in Path(QA_directory + '/' + path).glob('*') if x.is_dir()])
+    datasets = sorted([str(x.name) for x in Path(qa_directory + '/' + path).glob('*') if x.is_dir()])
 
     return jsonify(datasets=datasets)
 
 @app.route('/datasets/<path:clicked_path>')
+@require_qa_directory
 def datasets(clicked_path):
+    """Redirect to combined selection page with dataset pre-selected."""
     if args.debug:
-        print("Clicked path:", clicked_path)
-    pipelines = sorted([str(x.name) for x in Path(QA_directory + '/' + clicked_path).glob('*') if x.is_dir()], key=lambda x: (x.startswith('Tractseg'), x.upper()))
-    return render_template('datasets.html', clicked_path=clicked_path, directories=pipelines)
+        print("Redirecting clicked path:", clicked_path)
+    return redirect(url_for('index', dataset=clicked_path))
 
 @app.route('/datasets/<path:clicked_path>/<path:pipeline>')
+@require_qa_directory
 def render_montage(clicked_path, pipeline):
+    qa_directory = get_qa_directory()
 
     print("Beginning montage...")
 
@@ -378,8 +522,8 @@ def render_montage(clicked_path, pipeline):
     #now = datetime.now()
 
     # Get the list of PNG files in the pipeline directory (or pdfs)
-    pipeline_path = Path(QA_directory + '/' + clicked_path + '/' + pipeline)
-    pngs = [str(x.relative_to(QA_directory)) for x in itertools.chain(pipeline_path.glob('*.pdf'), pipeline_path.glob('*.png'))]  # Convert paths to relative paths
+    pipeline_path = Path(qa_directory + '/' + clicked_path + '/' + pipeline)
+    pngs = [str(x.relative_to(qa_directory)) for x in itertools.chain(pipeline_path.glob('*.pdf'), pipeline_path.glob('*.png'))]  # Convert paths to relative paths
     # make the pngs list sorted
     pngs = sorted(pngs)
 
@@ -393,8 +537,8 @@ def render_montage(clicked_path, pipeline):
     #print("Image paths:", image_paths)
 
     #check to see if the json file exists. If it doesn't, create it
-    global json_path #initialize the global variable (we will need the path to update the json file later)
     json_path = pipeline_path / 'QA.json'
+    session['json_path'] = str(json_path)  # Store in session for update_qa_dict
     if not json_path.exists():
         #create the json dictionary
         print("Creating QA json file...")
@@ -462,13 +606,15 @@ def render_montage(clicked_path, pipeline):
 
 
 @app.route('/datasets/<path:clicked_path>/<path:pipeline>/<path:image_filename>')
+@require_qa_directory
 def serve_image(clicked_path, pipeline, image_filename):
     """
     This function is used to load in a single image file (png) from the QA directory
     """
+    qa_directory = get_qa_directory()
 
     # Construct the full path to the image file
-    image_path = os.path.join(QA_directory, clicked_path, pipeline, image_filename)
+    image_path = os.path.join(qa_directory, clicked_path, pipeline, image_filename)
 
     # Check if the image file exists
     #print("Checking for file:", image_path)
@@ -496,6 +642,12 @@ def update_qa_dict():
     """
     This function is called to update the QA JSON and CSV with the new QA status and reason
     """
+    # Get json_path from session
+    json_path_str = session.get('json_path')
+    if not json_path_str:
+        return jsonify({'status': 'error', 'message': 'No active QA session'}), 400
+    json_path = Path(json_path_str)
+
     # Get the JSON data from the request
     nested_dict = request.json
 
