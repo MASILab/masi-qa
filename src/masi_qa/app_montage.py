@@ -1,18 +1,25 @@
 """
-Author: Michael Kim
-Email: michael.kim@vanderbilt.edu
+Authors: Michael Kim (michael.kim@vanderbilt.edu)
+         Yihao Liu (yihao.liu@vanderbilt.edu)
 
-Date: July 11, 2024
+MASI Lab @ Vanderbilt University
+License: MIT
 """
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp
+import os, json, io, argparse, re, grp, logging
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
+from importlib.metadata import version, PackageNotFoundError
 import itertools
+
+try:
+    __version__ = version("masi-qa")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 def pa():
     parser = argparse.ArgumentParser(description="""
@@ -204,8 +211,6 @@ def convert_json_to_csv(json_dict, pipeline_path, permissions=False):
     # #header = ['sub', 'ses', 'acq', 'run', 'QA_status', 'reason', 'user', 'date']
     header = ['filename', 'QA_status', 'reason', 'date', 'duration']
     df = pd.DataFrame(json_dict).T
-    #reorder the columns accroding to the header
-    print(df.columns)
     df = df[header]
     #replace NaN with empty string
     df = df.fillna('')
@@ -505,7 +510,7 @@ def datasets(clicked_path):
 def render_montage(clicked_path, pipeline):
     qa_directory = get_qa_directory()
 
-    print("Beginning montage...")
+    print(f"Loading images from: {clicked_path}/{pipeline}")
 
     #define the current user (obtained from os)
     #user = os.getlogin()
@@ -533,7 +538,7 @@ def render_montage(clicked_path, pipeline):
     session['json_path'] = str(json_path)  # Store in session for update_qa_dict
     if not json_path.exists():
         #create the json dictionary
-        print("Creating QA json file...")
+        print("Creating new QA session...")
         json_dict = create_json_dict(pngs_files)
         #convert the json dictionary to a csv
         df = convert_json_to_csv(json_dict, pipeline_path, permissions=False)
@@ -656,17 +661,30 @@ def main():
     global args
     args = pa()
 
-    print("*****************")
-    print("*****************")
+    # Suppress Flask/Werkzeug request logging unless in debug mode
+    if not args.debug:
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.ERROR)
+
     print()
-    print("Author: Michael Kim")
+    print("=" * 50)
+    print(f"  MASI-QA v{__version__}")
+    print("=" * 50)
     print()
-    print("*****************")
-    print("*****************")
+    print("  Authors: Michael Kim, Yihao Liu")
+    print("  MASI Lab @ Vanderbilt University")
+    print("  License: MIT")
+    print()
+    print("-" * 50)
+    print("  Running at: http://localhost:5000")
+    print("  Press Ctrl+C to stop")
+    print("-" * 50)
+    print()
+
     if args.debug:
         app.run(host='0.0.0.0', debug=True)
     else:
-        app.run(host='0.0.0.0')
+        app.run(host='0.0.0.0', debug=False)
 
 if __name__ == "__main__":
     main()
