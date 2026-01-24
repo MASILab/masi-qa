@@ -17,8 +17,18 @@ This is the BIDS-agnostic version of [ADSP_AutoQA](https://github.com/MASILab/AD
 
 ## Installation
 
+### From PyPI
+
 ```bash
 pip install masi-qa
+```
+
+### From Source
+
+```bash
+git clone https://github.com/MASILab/masi-qa.git
+cd masi-qa
+pip install .
 ```
 
 ### Requirements
