@@ -4,26 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GeneralQATool is a Flask-based web application for reviewing and annotating medical images (PNG/PDF files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data. This is the BIDS-agnostic version of ADSP_AutoQA.
+masi-qa is a Flask-based web application for reviewing and annotating medical images (PNG/PDF files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data. This is the BIDS-agnostic version of ADSP_AutoQA.
 
 **Citation:** Kim, Michael E., et al. "Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets." PLOS One (2025).
 
-**Related:** BIDS-specific version at https://github.com/MASILab/ADSP_AutoQA
+**Related:** BIDS-specific version at `https://github.com/MASILab/ADSP_AutoQA`
 
 ## Running the Application
 
 ```bash
-python CODE/app_montage.py /path/to/qa/directory [--debug]
+masi-qa [--debug]
 ```
 
-- First argument: Absolute path to QA images directory (required)
 - `--debug`: Enable Flask debug mode with hot reload
 
 Access at http://localhost:5000 (or http://0.0.0.0:5000 for Docker/external access)
 
 ## Dependencies
 
-Install via: `pip install -r requirements.txt`
+Install via: `pip install masi-qa`
 
 - Flask 2.2.2
 - pandas 2.0.3
@@ -32,12 +31,12 @@ Install via: `pip install -r requirements.txt`
 
 ## Architecture
 
-**Backend (`CODE/app_montage.py`):**
+**Backend (`src/masi_qa/app_montage.py`):**
 - Flask REST API serving images and handling QA status updates
 - JSON/CSV file management for persistent QA tracking
 - Directory traversal for dataset/pipeline discovery
 
-**Frontend (`CODE/templates/`):**
+**Frontend (`src/masi_qa/templates/`):**
 - `montage.html`: Main QA interface with image viewer and keyboard shortcuts
 - `root.html`: Initial dataset selection
 - `datasets.html`: Pipeline directory selection

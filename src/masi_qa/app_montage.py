@@ -24,8 +24,6 @@ def pa():
     The updated CSV will be saved to the specified save path as updates are made.
 
 """)
-    parser.add_argument('QA_directory', type=str, nargs='?', default=None,
-                        help='path to QA directory (optional - can be set via web interface)')
     parser.add_argument('--debug', action='store_true', help='enable debug mode')
 
     return parser.parse_args()
@@ -33,19 +31,13 @@ def pa():
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
 
-args = pa()
-
-# Validate command-line QA_directory if provided
-if args.QA_directory:
-    assert os.path.isabs(args.QA_directory), "The QA directory path must be an absolute path."
-    assert os.path.exists(args.QA_directory), "The QA directory path does not exist."
+# Defaults are safe for import (e.g., when installed as a package).
+args = argparse.Namespace(debug=False)
 
 def get_qa_directory():
     """Get QA directory from session, falling back to command-line arg."""
     if 'qa_directory' in session:
         return session['qa_directory']
-    if args.QA_directory:
-        return args.QA_directory
     return None
 
 def validate_directory(path):
@@ -660,14 +652,21 @@ def update_qa_dict():
     # Return a JSON response with the updated dictionary
     return jsonify({'status': 'success', 'updatedDict': nested_dict})
 
-print("*****************")
-print("*****************")
-print()
-print("Author: Michael Kim")
-print()
-print("*****************")
-print("*****************")
-if args.debug:
-    app.run(host='0.0.0.0', debug=True)
-else:
-    app.run(host='0.0.0.0')
+def main():
+    global args
+    args = pa()
+
+    print("*****************")
+    print("*****************")
+    print()
+    print("Author: Michael Kim")
+    print()
+    print("*****************")
+    print("*****************")
+    if args.debug:
+        app.run(host='0.0.0.0', debug=True)
+    else:
+        app.run(host='0.0.0.0')
+
+if __name__ == "__main__":
+    main()

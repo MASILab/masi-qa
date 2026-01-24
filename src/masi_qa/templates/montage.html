@@ -376,7 +376,11 @@
         function createQAButton(status, isActive) {
             const button = document.createElement('button');
             button.className = `qa-button ${status.toLowerCase()}`;
-            button.textContent = status;
+            button.dataset.qaStatus = status.toLowerCase();
+            // Add keyboard shortcut hints to button labels
+            const shortcuts = {'Yes': 'Q', 'No': 'W', 'Maybe': 'E'};
+            const shortcut = shortcuts[status];
+            button.textContent = shortcut ? `${status} (${shortcut})` : status;
             if (isActive) { 
                 button.classList.add('active');
             }
@@ -393,10 +397,10 @@
 
         //WIP: function to get a specific QA button
             //for instance, pass it the text 'Yes' and it will return the button with the text 'Yes'
-        function findButtonByTextContent(text) {
+        function findButtonByStatus(status) {
             const buttons = document.querySelectorAll('.qa-button');
             for (let button of buttons) {
-                if (button.textContent === text) {
+                if (button.dataset.qaStatus === status) {
                     return button;
                 }
             }
@@ -450,19 +454,19 @@
                         break;
                     // TODO: Keyboard shortcuts for QA buttons
                     case 'KeyQ':
-                        button = findButtonByTextContent('Yes');
+                        button = findButtonByStatus('yes');
                         if (button) {
                             button.click();
                         }
                         break;
                     case 'KeyW':
-                        button = findButtonByTextContent('No');
+                        button = findButtonByStatus('no');
                         if (button) {
                             button.click();
                         }
                         break;
                     case 'KeyE':
-                        button = findButtonByTextContent('Maybe');
+                        button = findButtonByStatus('maybe');
                         if (button) {
                             button.click();
                         }
@@ -480,7 +484,8 @@
                 //if they are different, update the dictionary accordingly and push the changes to the server
             const qaButtons = document.querySelectorAll('.qa-button');
             console.log(qaButtons); //check to see if the buttons are being selected
-            const qaStatus = Array.from(qaButtons).find(btn => btn.classList.contains('active')).textContent.toLowerCase();
+            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
+            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
             const reasonInput = document.querySelector('.reason-input').value;
             //console.log('Current QA Status:', qaStatus);
             //console.log('Current Reason:', reasonInput);
@@ -647,7 +652,7 @@
             // Get current QA status and reason
             const qaButtons = document.querySelectorAll('.qa-button');
             const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
-            const qaStatus = activeButton ? activeButton.textContent.toLowerCase() : 'yes';
+            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
             const reasonInputValue = document.querySelector('.reason-input')?.value || '';
 
             // Get current image info
