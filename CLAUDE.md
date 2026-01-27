@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-masi-qa is a Flask-based web application for reviewing and annotating medical images (PNG/PDF files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data. This is the BIDS-agnostic version of ADSP_AutoQA.
+masi-qa is a Flask-based web application for reviewing and annotating medical images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data. This is the BIDS-agnostic version of ADSP_AutoQA.
 
 **Citation:** Kim, Michael E., et al. "Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets." PLOS One (2025).
 
@@ -43,7 +43,7 @@ Install via: `pip install masi-qa`
 
 **Data Flow:**
 1. User selects dataset → pipeline directory
-2. Backend scans for PNG/PDF files, creates/loads `QA.json`
+2. Backend scans for PNG files, creates/loads `QA.json`
 3. Frontend displays images with QA controls
 4. QA status saved to `QA.json` and exported to `QA.csv`
 
@@ -97,7 +97,7 @@ Install via: `pip install masi-qa`
 ## Key Implementation Details
 
 - Host bound to `0.0.0.0` for Docker compatibility
-- Enforces single image format (PNG or PDF) per pipeline
+- Only supports PNG image format
 - QA status values: "yes", "no", "maybe"
 - Unix group permissions set to `p_masi` with 0o775
 - `QA.json` auto-created with default status "yes"; changes saved when navigating to next image

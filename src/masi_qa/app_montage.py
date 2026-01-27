@@ -518,15 +518,11 @@ def render_montage(clicked_path, pipeline):
     #get the current date and time as a string
     #now = datetime.now()
 
-    # Get the list of PNG files in the pipeline directory (or pdfs)
+    # Get the list of PNG files in the pipeline directory
     pipeline_path = Path(qa_directory + '/' + clicked_path + '/' + pipeline)
-    pngs = [str(x.relative_to(qa_directory)) for x in itertools.chain(pipeline_path.glob('**/*.pdf'), pipeline_path.glob('**/*.png'))]  # Convert paths to relative paths (recursive)
+    pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]  # Convert paths to relative paths (recursive)
     # make the pngs list sorted
     pngs = sorted(pngs)
-
-    ### check to make sure that there are not both pngs and pdfs
-    ext = pngs[0].split('.')[-1]
-    assert all([ x.split('.')[-1] == ext for x in pngs]), "There are both pngs and pdfs in the pipeline directory. Please correct before attempting QA."
 
     #pass image paths to montage.html so they can be loaded
     image_paths = [str(png) for png in pngs]
@@ -603,7 +599,6 @@ def render_montage(clicked_path, pipeline):
             # ** TODO **
 
 
-#may need to create separate ones for PreQual, or others that use PDFs
 
 
 @app.route('/datasets/<path:clicked_path>/<path:pipeline>/<path:image_filename>')
