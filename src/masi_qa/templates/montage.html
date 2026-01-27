@@ -217,7 +217,18 @@
 
         // Function to construct the image URL
         function constructImageUrl(clickedPath, pipeline, imageName) {
-            return `/datasets/${encodeURIComponent(clickedPath)}/${encodeURIComponent(pipeline)}/${encodeURIComponent(imageName)}`;
+            // imageName may contain subdirectory path (e.g., "subdir/image.png")
+            // Encode each path component separately to preserve slashes
+            const encodedImageName = imageName.split('/').map(encodeURIComponent).join('/');
+            return `/datasets/${encodeURIComponent(clickedPath)}/${encodeURIComponent(pipeline)}/${encodedImageName}`;
+        }
+
+        // Function to extract the image path relative to the pipeline folder
+        // imagePath is like "dataset/pipeline/subdir/image.png"
+        // Returns "subdir/image.png" (the path relative to pipeline folder)
+        function getRelativeImagePath(imagePath) {
+            const prefix = clickedPath + '/' + pipeline + '/';
+            return imagePath.startsWith(prefix) ? imagePath.slice(prefix.length) : imagePath.split('/').pop();
         }
 
         //function that preloads all images and initializes the montage
@@ -236,14 +247,15 @@
             }
 
             imagePaths.forEach((imagePath, index) => {
-                const imageUrl = constructImageUrl(clickedPath, pipeline, imagePath.split('/').pop());
+                const imageName = getRelativeImagePath(imagePath);
+                const imageUrl = constructImageUrl(clickedPath, pipeline, imageName);
                 const img = new Image();
                 img.onload = () => {
                     imageElements[index] = img; // Store loaded image element
                     handleImageLoad();
                 };
                 img.onerror = () => {
-                    console.log('Error loading image:', imagePath.split('/').pop());
+                    console.log('Error loading image:', imageName);
                     handleImageLoad(); // Ensure loadedCount is updated even if there's an error
                 };
                 img.src = imageUrl;
@@ -303,7 +315,7 @@
             // Create elements for current image
             const imagePath = imagePaths[currentImageIndex];
             //console.log(imagePath);
-            const imageName = imagePath.split('/').pop(); // Get filename from path
+            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
             //console.log(imageName);
 
             const imageContainer = document.createElement('div');
@@ -536,7 +548,7 @@
 
             // get the current values in the json dictionary
             const imagePath = imagePaths[currentImageIndex];
-            const imageName = imagePath.split('/').pop(); // Get filename from path
+            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
 
@@ -699,7 +711,7 @@
             const reasonInputValue = document.querySelector('.reason-input')?.value || '';
 
             const imagePath = imagePaths[currentImageIndex];
-            const imageName = imagePath.split('/').pop();
+            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
 
@@ -765,7 +777,7 @@
             for (let i = 1; i <= total; i++) {
                 const checkIndex = (currentImageIndex + i) % total;
                 const imagePath = imagePaths[checkIndex];
-                const imageName = imagePath.split('/').pop();
+                const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
                 const bidsFields = getBIDSFieldsFromPNG(imageName, false);
                 const qaDict = getLeafDict(nestedDict, bidsFields);
 
@@ -791,7 +803,7 @@
 
             // Get current image info
             const imagePath = imagePaths[currentImageIndex];
-            const imageName = imagePath.split('/').pop();
+            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
 

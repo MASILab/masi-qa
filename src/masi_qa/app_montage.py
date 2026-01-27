@@ -520,7 +520,7 @@ def render_montage(clicked_path, pipeline):
 
     # Get the list of PNG files in the pipeline directory (or pdfs)
     pipeline_path = Path(qa_directory + '/' + clicked_path + '/' + pipeline)
-    pngs = [str(x.relative_to(qa_directory)) for x in itertools.chain(pipeline_path.glob('*.pdf'), pipeline_path.glob('*.png'))]  # Convert paths to relative paths
+    pngs = [str(x.relative_to(qa_directory)) for x in itertools.chain(pipeline_path.glob('**/*.pdf'), pipeline_path.glob('**/*.png'))]  # Convert paths to relative paths (recursive)
     # make the pngs list sorted
     pngs = sorted(pngs)
 
@@ -530,7 +530,9 @@ def render_montage(clicked_path, pipeline):
 
     #pass image paths to montage.html so they can be loaded
     image_paths = [str(png) for png in pngs]
-    pngs_files = [ x.split('/')[-1] for x in pngs]
+    # Extract paths relative to pipeline folder (e.g., "subdir/image.png" for recursive images)
+    prefix = clicked_path + '/' + pipeline + '/'
+    pngs_files = [x[len(prefix):] for x in pngs]
     #print("Image paths:", image_paths)
 
     #check to see if the json file exists. If it doesn't, create it
@@ -563,7 +565,9 @@ def render_montage(clicked_path, pipeline):
         assert_valid_qa_status(leaf_dicts)
 
         #check to make sure that every json entry has a corresponding png file (throw an error if not)
-        pngs_files = [ x.split('/')[-1] for x in pngs]
+        # Extract paths relative to pipeline folder (e.g., "subdir/image.png" for recursive images)
+        prefix = clicked_path + '/' + pipeline + '/'
+        pngs_files = [x[len(prefix):] for x in pngs]
         check_png_for_json(leaf_dicts, [str(x) for x in pngs_files])
 
         #if the png does not have a corresponding json entry, it needs to be added
