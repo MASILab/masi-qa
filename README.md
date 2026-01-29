@@ -2,7 +2,7 @@
 
 A Flask-based web application for reviewing and annotating medical QA images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data.
 
-This is the BIDS-agnostic version of [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA). Please visit this page for in-depth instructions on usage.
+Supports both **BIDS-agnostic** and **BIDS-compliant** modes. For BIDS-only workflows, see [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA).
 
 If you use this for your research, please cite the following paper:
 
@@ -14,6 +14,8 @@ Kim, Michael E., et al. "Scalable quality control on processing of large diffusi
 - Keyboard-driven workflow for fast QA review
 - Three-state QA classification: Yes, No, Maybe
 - Optional reason field for documenting QA decisions
+- **Reviewer name tracking** for multi-user workflows
+- **Optional BIDS compliance mode** with filename validation
 - Automatic tracking of review timestamps and duration
 - Persistent storage via JSON with CSV export
 - Autoplay mode for rapid image cycling
@@ -53,9 +55,13 @@ pip install .
 
 2. Open your browser to http://localhost:5000
 
-3. Select a root directory containing your datasets
+3. Enter your **reviewer name** (required)
 
-4. Navigate to a dataset and pipeline to begin QA review
+4. Optionally enable **BIDS compliance mode** if your files follow BIDS naming conventions
+
+5. Select a root directory, dataset, and pipeline
+
+6. Click "Continue to QA" to begin review
 
 ### Debug Mode
 
@@ -63,6 +69,34 @@ Enable Flask debug mode with hot reload:
 ```bash
 masi-qa --debug
 ```
+
+## QA Settings
+
+Before starting a QA session, configure these settings on the selection page:
+
+### Reviewer Name (Required)
+
+Enter your name to track who reviewed each image. This is recorded in the `user` field of the output files. The field turns green when filled.
+
+### BIDS Compliance Mode (Optional)
+
+When enabled, the application validates that all PNG filenames follow the [BIDS](https://bids.neuroimaging.io/) naming convention:
+
+```
+sub-<subject>_ses-<session>_<pipeline>.png
+sub-<subject>_ses-<session>_<pipeline>acq-<acquisition>.png
+sub-<subject>_ses-<session>_<pipeline>run-<run>.png
+sub-<subject>_<pipeline>.png  (if no session)
+```
+
+**Required**: `sub-*` (subject identifier)
+**Optional**: `ses-*` (session), `acq-*` (acquisition), `run-*` (run number)
+
+If any files are non-compliant, an error page will list them with the expected format. You can then go back and either rename the files or disable BIDS mode.
+
+When BIDS mode is enabled:
+- Output uses a nested JSON structure organized by BIDS tags
+- CSV includes columns: `sub, ses, acq, run, QA_status, reason, user, date`
 
 ## Expected Directory Structure
 
@@ -101,7 +135,9 @@ Each pipeline directory should contain PNG files only.
 
 ## QA Data Format
 
-QA results are stored in `QA.json` with the following structure:
+QA results are stored in `QA.json` and exported to `QA.csv`. The format depends on whether BIDS mode is enabled.
+
+### Standard Mode (Non-BIDS)
 
 ```json
 {
@@ -109,19 +145,47 @@ QA results are stored in `QA.json` with the following structure:
     "filename": "filename.png",
     "QA_status": "yes",
     "reason": "",
+    "user": "reviewer_name",
     "date": "2024-07-10 00:09:13",
     "duration": 45
   }
 }
 ```
 
+**CSV columns**: `filename, QA_status, reason, user, date, duration`
+
+### BIDS Mode
+
+```json
+{
+  "sub-001": {
+    "ses-01": {
+      "QA_status": "yes",
+      "reason": "",
+      "user": "reviewer_name",
+      "date": "2024-07-10 00:09:13",
+      "sub": "sub-001",
+      "ses": "ses-01",
+      "acq": "",
+      "run": ""
+    }
+  }
+}
+```
+
+**CSV columns**: `sub, ses, acq, run, QA_status, reason, user, date`
+
+### Field Descriptions
+
 | Field | Description |
 |-------|-------------|
-| `filename` | Name of the image file |
+| `filename` | Name of the image file (non-BIDS mode only) |
+| `sub/ses/acq/run` | BIDS identifiers (BIDS mode only) |
 | `QA_status` | Review status: `yes`, `no`, or `maybe` |
 | `reason` | Optional text explaining the QA decision |
-| `date` | Timestamp of the last review |
-| `duration` | Total seconds spent viewing the image (cumulative) |
+| `user` | Name of the reviewer (empty until reviewed) |
+| `date` | Timestamp of the last review (empty until reviewed) |
+| `duration` | Total seconds spent viewing the image (non-BIDS mode only) |
 
 A `QA.csv` file is automatically generated alongside the JSON for easy data analysis.
 
@@ -156,4 +220,4 @@ See [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA) - BIDS-specific version of this tool
+- [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA) - BIDS-specific version with enforced BIDS compliance
