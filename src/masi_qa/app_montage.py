@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging
+import os, json, io, argparse, re, grp, logging, socket
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -21,6 +21,17 @@ try:
 except PackageNotFoundError:
     __version__ = "unknown"
 
+def find_available_port(start_port=5000, max_attempts=10):
+    """Find an available port starting from start_port."""
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('0.0.0.0', port))
+                return port
+        except OSError:
+            continue
+    return None
+
 def pa():
     parser = argparse.ArgumentParser(description="""
 
@@ -32,6 +43,8 @@ def pa():
 
 """)
     parser.add_argument('--debug', action='store_true', help='enable debug mode')
+    parser.add_argument('--port', type=int, default=None,
+                        help='port to run the server on (default: auto-detect 5000-5009)')
 
     return parser.parse_args()
 
@@ -673,17 +686,24 @@ def main():
     print("  Authors: Michael Kim, Yihao Liu")
     print("  MASI Lab @ Vanderbilt University")
     print("  License: MIT")
+    # Determine port
+    if args.port:
+        port = args.port
+    else:
+        port = find_available_port()
+        if port is None:
+            print("Error: Could not find an available port (tried 5000-5009)")
+            print("Use --port to specify a different port")
+            return
+
     print()
     print("-" * 50)
-    print("  Running at: http://localhost:5000")
+    print(f"  Running at: http://localhost:{port}")
     print("  Press Ctrl+C to stop")
     print("-" * 50)
     print()
 
-    if args.debug:
-        app.run(host='0.0.0.0', debug=True)
-    else:
-        app.run(host='0.0.0.0', debug=False)
+    app.run(host='0.0.0.0', port=port, debug=args.debug)
 
 if __name__ == "__main__":
     main()
