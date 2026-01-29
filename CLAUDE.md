@@ -40,6 +40,7 @@ Install via: `pip install masi-qa`
 - `montage.html`: Main QA interface with image viewer and keyboard shortcuts
 - `root.html`: Initial dataset selection with QA settings (reviewer name, BIDS mode)
 - `bids_errors.html`: Error page showing non-BIDS-compliant files
+- `mode_mismatch.html`: Error page when selected mode doesn't match existing QA data format
 
 **Data Flow:**
 1. User selects dataset → pipeline directory, configures QA settings
@@ -58,6 +59,14 @@ The dataset selection page includes two settings:
 - Shows an error page listing non-compliant files if any are found
 - Uses nested JSON structure and BIDS-formatted CSV output (matching ADSP_AutoQA)
 - Required BIDS fields: `sub-*`, Optional: `ses-*`, `acq-*`, `run-*`
+
+**Format Mismatch Detection:** When opening a dataset that has existing QA data:
+- Detects if the existing `QA.json` format (BIDS vs flat) matches the selected mode
+- If mismatched, shows an error page with options to:
+  1. Go back and change the mode to match existing data
+  2. Convert the existing data to match the selected mode
+- Conversion creates a backup (`QA.json.backup`) before modifying
+- Converting flat→BIDS requires all filenames to be BIDS-compliant
 
 **QA.json Entry Structure (Non-BIDS Mode):**
 ```json

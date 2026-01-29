@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging, socket
+import os, json, io, argparse, re, grp, logging, socket, shutil
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -448,6 +448,149 @@ def assert_valid_qa_status(dict_list):
     for d in dict_list:
         assert d['QA_status'] in valid_statuses, f"QA status {d['QA_status']} is not valid for dictionary {d}"
 
+
+def detect_json_format(json_dict):
+    """
+    Detect the format of a QA JSON dictionary.
+    Returns: 'bids' if nested BIDS structure, 'flat' if flat filename-keyed structure, 'empty' if no entries.
+    """
+    if not json_dict:
+        return 'empty'
+
+    # Check the first key to determine format
+    first_key = next(iter(json_dict.keys()))
+    first_value = json_dict[first_key]
+
+    # Flat format: keys are filenames (end with .png), values have 'filename' field
+    if first_key.endswith('.png') and isinstance(first_value, dict) and 'filename' in first_value:
+        return 'flat'
+
+    # BIDS format: keys start with 'sub-', values are nested dicts
+    if first_key.startswith('sub-') and isinstance(first_value, dict):
+        return 'bids'
+
+    # Edge case: check if it's a flat dict without .png extension (shouldn't happen but handle gracefully)
+    if isinstance(first_value, dict) and 'QA_status' in first_value and 'filename' in first_value:
+        return 'flat'
+
+    # Default to BIDS if keys look like BIDS tags
+    if first_key.startswith('sub-'):
+        return 'bids'
+
+    return 'unknown'
+
+
+def convert_bids_to_flat(bids_json, pngs):
+    """
+    Convert a BIDS-structured JSON to flat filename-keyed format.
+    Uses the PNG filenames to map BIDS entries back to files.
+
+    Args:
+        bids_json: The nested BIDS JSON dictionary
+        pngs: List of PNG filenames (without path prefix)
+
+    Returns:
+        Flat JSON dictionary keyed by filename
+    """
+    flat_json = {}
+
+    # Build a mapping from BIDS tags to filenames
+    bids_to_filename = {}
+    for png in pngs:
+        tags = get_BIDS_fields_from_png(png)
+        if tags:
+            # Create a key from the BIDS tags (sub, ses, acq, run)
+            key = (tags['sub'], tags['ses'] or '', tags['acq'] or '', tags['run'] or '')
+            bids_to_filename[key] = png
+
+    # Extract leaf dicts from BIDS structure
+    leaf_dicts = get_leaf_dicts(bids_json)
+
+    for paths, leaf_dict in leaf_dicts:
+        # Get BIDS tags from the leaf dict
+        sub = leaf_dict.get('sub', '')
+        ses = leaf_dict.get('ses', '')
+        acq = leaf_dict.get('acq', '')
+        run = leaf_dict.get('run', '')
+
+        # Find the corresponding filename
+        key = (sub, ses, acq, run)
+        if key in bids_to_filename:
+            filename = bids_to_filename[key]
+            flat_json[filename] = {
+                'filename': filename,
+                'QA_status': leaf_dict.get('QA_status', 'yes'),
+                'reason': leaf_dict.get('reason', ''),
+                'user': leaf_dict.get('user', ''),
+                'date': leaf_dict.get('date', ''),
+                'duration': 0  # Duration not tracked in BIDS mode
+            }
+
+    # Add any PNG files that weren't in the BIDS JSON
+    for png in pngs:
+        if png not in flat_json:
+            flat_json[png] = {
+                'filename': png,
+                'QA_status': 'yes',
+                'reason': '',
+                'user': '',
+                'date': '',
+                'duration': 0
+            }
+
+    return flat_json
+
+
+def convert_flat_to_bids(flat_json, pngs):
+    """
+    Convert a flat filename-keyed JSON to BIDS nested structure.
+    Only works if filenames are BIDS-compliant.
+
+    Args:
+        flat_json: The flat JSON dictionary keyed by filename
+        pngs: List of PNG filenames (without path prefix)
+
+    Returns:
+        Nested BIDS JSON dictionary, or None if any filename is not BIDS-compliant
+    """
+    # First verify all filenames are BIDS-compliant
+    compliant, non_compliant = validate_bids_compliance(pngs)
+    if non_compliant:
+        return None  # Cannot convert if files aren't BIDS-compliant
+
+    bids_json = {}
+
+    for png in pngs:
+        tags = get_BIDS_fields_from_png(png)
+        if tags is None:
+            continue
+
+        sub, ses, acq, run = tags['sub'], tags['ses'], tags['acq'], tags['run']
+
+        # Get existing data from flat JSON if available
+        flat_entry = flat_json.get(png, {})
+
+        # Navigate/create nested structure
+        current_d = bids_json
+        for tag in [sub, ses, acq, run]:
+            if tag:
+                current_d = current_d.setdefault(tag, {})
+
+        # Set the values
+        current_d.update({
+            'QA_status': flat_entry.get('QA_status', 'yes'),
+            'reason': flat_entry.get('reason', ''),
+            'user': flat_entry.get('user', ''),
+            'date': flat_entry.get('date', ''),
+            'sub': sub,
+            'ses': ses if ses else '',
+            'acq': acq if acq else '',
+            'run': run if run else ''
+        })
+
+    return bids_json
+
+
 def save_json_file(path, dict, permissions=False):
     """
     Given a json dictionary, save it to the json file
@@ -515,6 +658,66 @@ def set_options():
     session['bids_mode'] = data.get('bids_mode', False)
     session['user_name'] = data.get('user_name', '').strip()
     return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name']})
+
+
+@app.route('/convert-qa-format/<path:clicked_path>/<path:pipeline>', methods=['POST'])
+@require_qa_directory
+def convert_qa_format(clicked_path, pipeline):
+    """Convert QA.json between BIDS and flat formats."""
+    qa_directory = get_qa_directory()
+    bids_mode = session.get('bids_mode', False)
+    target_format = 'bids' if bids_mode else 'flat'
+
+    pipeline_path = Path(qa_directory + '/' + clicked_path + '/' + pipeline)
+    json_path = pipeline_path / 'QA.json'
+
+    if not json_path.exists():
+        flash("No QA.json file found to convert.", 'error')
+        return redirect(url_for('index'))
+
+    # Load existing JSON
+    with open(json_path, 'r') as f:
+        json_dict = json.load(f)
+
+    existing_format = detect_json_format(json_dict)
+
+    # Get list of PNG files
+    pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
+    pngs = sorted(pngs)
+    prefix = clicked_path + '/' + pipeline + '/'
+    pngs_files = [x[len(prefix):] for x in pngs]
+
+    # Create backup
+    backup_path = pipeline_path / 'QA.json.backup'
+    shutil.copy(json_path, backup_path)
+    print(f"Created backup at: {backup_path}")
+
+    # Perform conversion
+    if target_format == 'bids' and existing_format == 'flat':
+        # Convert flat to BIDS
+        converted_json = convert_flat_to_bids(json_dict, pngs_files)
+        if converted_json is None:
+            flash("Conversion failed: some files are not BIDS-compliant.", 'error')
+            return redirect(url_for('index'))
+    elif target_format == 'flat' and existing_format == 'bids':
+        # Convert BIDS to flat
+        converted_json = convert_bids_to_flat(json_dict, pngs_files)
+    else:
+        flash(f"No conversion needed: data is already in {existing_format} format.", 'info')
+        return redirect(url_for('render_montage', clicked_path=clicked_path, pipeline=pipeline))
+
+    # Save converted JSON
+    save_json_file(json_path, converted_json, permissions=False)
+
+    # Regenerate CSV in new format
+    convert_json_to_csv(converted_json, pipeline_path, bids_mode=bids_mode, permissions=False)
+
+    print(f"Converted QA data from {existing_format} to {target_format} format")
+    flash(f"Successfully converted QA data to {target_format.upper() if target_format == 'bids' else 'Standard'} format. Backup saved as QA.json.backup", 'success')
+
+    # Redirect to the QA page
+    return redirect(url_for('render_montage', clicked_path=clicked_path, pipeline=pipeline))
+
 
 @app.route('/browse-path', methods=['POST'])
 def browse_path():
@@ -646,6 +849,27 @@ def render_montage(clicked_path, pipeline):
     else:
         with open(json_path, 'r') as f:
             json_dict = json.load(f)
+
+        # Detect format mismatch between selected mode and existing data
+        existing_format = detect_json_format(json_dict)
+        selected_mode = 'bids' if bids_mode else 'flat'
+
+        if existing_format != 'empty' and existing_format != 'unknown':
+            if (bids_mode and existing_format == 'flat') or (not bids_mode and existing_format == 'bids'):
+                # Format mismatch detected
+                conversion_error = None
+                if bids_mode and existing_format == 'flat':
+                    # Want BIDS but have flat - check if files are BIDS-compliant
+                    compliant, non_compliant = validate_bids_compliance(pngs_files)
+                    if non_compliant:
+                        conversion_error = f"Cannot convert to BIDS format because {len(non_compliant)} file(s) are not BIDS-compliant. Go back and disable BIDS mode, or rename files to follow BIDS naming convention."
+
+                return render_template('mode_mismatch.html',
+                                       clicked_path=clicked_path,
+                                       pipeline=pipeline,
+                                       selected_mode=selected_mode,
+                                       existing_format=existing_format,
+                                       conversion_error=conversion_error)
 
         # Check to make sure there are no duplicate QA dictionaries
         paths, leaf_dicts = zip(*get_leaf_dicts(json_dict))

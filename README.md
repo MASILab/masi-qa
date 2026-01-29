@@ -98,6 +98,15 @@ When BIDS mode is enabled:
 - Output uses a nested JSON structure organized by BIDS tags
 - CSV includes columns: `sub, ses, acq, run, QA_status, reason, user, date`
 
+### Switching Between Modes
+
+If you open a dataset that already has QA data in a different format than your selected mode, the application will detect this mismatch and offer two options:
+
+1. **Go Back**: Return to the selection page and change your mode to match the existing data
+2. **Convert Data**: Convert the existing QA data to match your selected mode
+
+Converting creates a backup (`QA.json.backup`) before modifying. Note that converting from Standard to BIDS mode requires all filenames to be BIDS-compliant.
+
 ## Expected Directory Structure
 
 ```
