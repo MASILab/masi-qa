@@ -271,13 +271,106 @@
         .btn-go:hover {
             background-color: #1565c0;
         }
+
+        /* QA Settings Section */
+        .settings-section {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: #f5f5f5;
+        }
+        .settings-section.active {
+            border-color: #4caf50;
+            background-color: #f5f5f5;
+        }
+        .settings-header {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        .settings-header.active {
+            color: #2e7d32;
+        }
+        .setting-item {
+            margin-bottom: 15px;
+        }
+        .setting-item:last-child {
+            margin-bottom: 0;
+        }
+        .setting-item label {
+            display: block;
+            color: #555;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        .setting-item input[type="text"] {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+            font-size: 14px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .setting-item input[type="text"]:focus {
+            border-color: #1976d2;
+            outline: none;
+        }
+        .setting-item input[type="text"].valid {
+            border-color: #4caf50;
+            background-color: #f1f8e9;
+        }
+        .required-indicator {
+            color: #c62828;
+            margin-left: 3px;
+        }
+        .checkbox-label {
+            display: flex !important;
+            align-items: center;
+            cursor: pointer;
+        }
+        .checkbox-label input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        .setting-hint {
+            display: block;
+            color: #888;
+            font-size: 12px;
+            margin-top: 5px;
+            margin-left: 28px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header-bar">
             <h1>Select QA Directory</h1>
-            <p class="subtitle">Browse to select a root directory, then choose a dataset and pipeline to begin QA review.</p>
+            <p class="subtitle">Enter your name, then browse to select a root directory, dataset, and pipeline to begin QA review.</p>
+        </div>
+
+        <!-- QA Settings Section (moved above selection grid) -->
+        <div class="settings-section" id="settingsSection">
+            <div class="settings-header" id="settingsHeader">QA Settings</div>
+
+            <!-- User Name Input (Required) -->
+            <div class="setting-item">
+                <label for="userName">Reviewer Name:<span class="required-indicator">*</span></label>
+                <input type="text" id="userName" placeholder="Enter your name (required)" oninput="updateSettingsState()">
+            </div>
+
+            <!-- BIDS Compliance Checkbox -->
+            <div class="setting-item">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="bidsMode">
+                    <span>Enforce BIDS compliance</span>
+                </label>
+                <span class="setting-hint">Requires filenames like: sub-XX_ses-YY_pipeline.png</span>
+            </div>
         </div>
 
         <div class="selection-grid">
@@ -346,6 +439,9 @@
 
         // Initialize - start from home directory or session directory
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize settings state
+            updateSettingsState();
+
             const sessionDir = '{{ qa_directory or "" }}';
             if (sessionDir) {
                 // Load the directory without resetting, then select it as root
@@ -716,15 +812,68 @@
             }
         }
 
-        function updateContinueButton() {
-            const continueBtn = document.getElementById('continueBtn');
-            continueBtn.disabled = !(selectedRootPath && selectedDataset && selectedPipeline);
+        function updateSettingsState() {
+            const userName = document.getElementById('userName').value.trim();
+            const settingsSection = document.getElementById('settingsSection');
+            const settingsHeader = document.getElementById('settingsHeader');
+            const userNameInput = document.getElementById('userName');
+
+            if (userName) {
+                settingsSection.classList.add('active');
+                settingsHeader.classList.add('active');
+                userNameInput.classList.add('valid');
+            } else {
+                settingsSection.classList.remove('active');
+                settingsHeader.classList.remove('active');
+                userNameInput.classList.remove('valid');
+            }
+
+            // Also update continue button when settings change
+            updateContinueButton();
         }
 
-        function continueToQA() {
-            if (selectedRootPath && selectedDataset && selectedPipeline) {
-                window.location.href = '/datasets/' + encodeURIComponent(selectedDataset) + '/' + encodeURIComponent(selectedPipeline);
+        function updateContinueButton() {
+            const continueBtn = document.getElementById('continueBtn');
+            const userName = document.getElementById('userName').value.trim();
+            // Require: reviewer name, root path, dataset, and pipeline
+            continueBtn.disabled = !(userName && selectedRootPath && selectedDataset && selectedPipeline);
+        }
+
+        async function continueToQA() {
+            const userName = document.getElementById('userName').value.trim();
+            const bidsMode = document.getElementById('bidsMode').checked;
+
+            // Validate all required fields
+            if (!userName) {
+                alert('Please enter your name before continuing.');
+                document.getElementById('userName').focus();
+                return;
             }
+            if (!selectedRootPath || !selectedDataset || !selectedPipeline) {
+                alert('Please select a root directory, dataset, and pipeline.');
+                return;
+            }
+
+            // Save QA settings to session first
+            try {
+                const response = await fetch('/set-options', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bids_mode: bidsMode,
+                        user_name: userName
+                    })
+                });
+
+                if (!response.ok) {
+                    console.error('Failed to save QA settings');
+                }
+            } catch (error) {
+                console.error('Error saving QA settings:', error);
+            }
+
+            // Navigate to QA page
+            window.location.href = '/datasets/' + encodeURIComponent(selectedDataset) + '/' + encodeURIComponent(selectedPipeline);
         }
 
         function toggleManualInput() {

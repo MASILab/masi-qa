@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BIDS Compliance Errors</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #fff3e0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #e65100;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        .error-summary {
+            background-color: #ffebee;
+            border: 1px solid #ef9a9a;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .error-summary-title {
+            font-weight: bold;
+            color: #c62828;
+            margin-bottom: 10px;
+        }
+        .error-count {
+            font-size: 18px;
+            color: #333;
+        }
+        .format-help {
+            background-color: #e3f2fd;
+            border: 1px solid #90caf9;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .format-help-title {
+            font-weight: bold;
+            color: #1565c0;
+            margin-bottom: 10px;
+        }
+        .format-example {
+            font-family: monospace;
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .format-note {
+            font-size: 13px;
+            color: #666;
+            margin-top: 10px;
+        }
+        .file-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .file-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #eee;
+            font-family: monospace;
+            font-size: 13px;
+            color: #c62828;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-item:nth-child(even) {
+            background-color: #fafafa;
+        }
+        .path-info {
+            background-color: #f5f5f5;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .path-label {
+            font-weight: bold;
+            color: #666;
+        }
+        .path-value {
+            font-family: monospace;
+            color: #333;
+        }
+        .btn-back {
+            padding: 15px 30px;
+            background-color: #ff9800;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn-back:hover {
+            background-color: #f57c00;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BIDS Compliance Errors</h1>
+        <p class="subtitle">The following files do not match the expected BIDS naming convention.</p>
+
+        <div class="path-info">
+            <span class="path-label">Selected Path:</span>
+            <span class="path-value">{{ clicked_path }} / {{ pipeline }}</span>
+        </div>
+
+        <div class="error-summary">
+            <div class="error-summary-title">Files Not BIDS Compliant</div>
+            <div class="error-count">{{ non_compliant_files|length }} of {{ total_files }} files failed validation</div>
+        </div>
+
+        <div class="format-help">
+            <div class="format-help-title">Expected BIDS Format</div>
+            <p>Files must follow the Brain Imaging Data Structure (BIDS) naming convention:</p>
+            <div class="format-example">
+                sub-&lt;subject_id&gt;_ses-&lt;session_id&gt;_&lt;pipeline&gt;.png<br>
+                sub-&lt;subject_id&gt;_ses-&lt;session_id&gt;_&lt;pipeline&gt;acq-&lt;acquisition&gt;.png<br>
+                sub-&lt;subject_id&gt;_ses-&lt;session_id&gt;_&lt;pipeline&gt;run-&lt;run_number&gt;.png<br>
+                sub-&lt;subject_id&gt;_&lt;pipeline&gt;.png (if no session)
+            </div>
+            <p class="format-note">
+                <strong>Required:</strong> sub-* (subject ID)<br>
+                <strong>Optional:</strong> ses-* (session), acq-* (acquisition), run-* (run number)
+            </p>
+        </div>
+
+        <h3>Non-compliant Files:</h3>
+        <div class="file-list">
+            {% for file in non_compliant_files %}
+            <div class="file-item">{{ file }}</div>
+            {% endfor %}
+        </div>
+
+        <button type="button" class="btn-back" onclick="window.location.href='/'">
+            <span>&larr;</span>
+            <span>Back to Selection</span>
+        </button>
+    </div>
+</body>
+</html>

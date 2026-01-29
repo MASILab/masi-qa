@@ -95,41 +95,71 @@ def require_qa_directory(f):
 def get_BIDS_fields_from_png(filename, return_pipeline=False):
     """
     Given a QA png filename, return the BIDS fields.
+    Returns None if filename doesn't match BIDS pattern (instead of raising error).
     """
-    #pattern = r"sub-(?P<sub>\d+)_ses-(?P<ses>\d+)_\w+acq-(?P<acq>\d+)run-(?P<run>\d+)\.png"
-    #pattern = r'(sub-\w+)(?:_(ses-\w+))?_([A-Za-z0-9\.]*)(?:(acq-\w+))?(?:(run-\d{1,2}))?\.png'
-    pattern = r'(sub-\w+)(?:_(ses-\w+))?_([A-Za-z0-9\.\-]+?)(?=acq\-|run\-|\.png)(?:(acq-\w+))?(?:(run-\d{1,2}))?\.png'
+    pattern = r'(sub-\w+)(?:_(ses-\w+))?_([A-Za-z0-9\.\-]+?)(?=acq\-|run\-|\.png)(?:(acq-\w+))?(?:(run-\d{1,4}))?\.png'
     match = re.match(pattern, filename)
-    #print("Match:", match)
-    assert match, f"Filename {filename} does not match the expected pattern."
+    if not match:
+        return None  # Return None instead of asserting
     tags = {'sub': match.group(1), 'ses': match.group(2), 'acq': match.group(4), 'run': match.group(5)}
     if return_pipeline:
         tags['pipeline'] = match.group(3)
     return tags
 
+
+def validate_bids_compliance(pngs):
+    """
+    Validate a list of PNG filenames for BIDS compliance.
+    Returns tuple: (compliant_files, non_compliant_files)
+    """
+    compliant = []
+    non_compliant = []
+    for png in pngs:
+        if get_BIDS_fields_from_png(png) is not None:
+            compliant.append(png)
+        else:
+            non_compliant.append(png)
+    return compliant, non_compliant
+
 def create_json_dict(filepaths):
     """
-    Given a list of filenames, create the initial BIDS json dictionary
+    Given a list of filenames, create the flat json dictionary (non-BIDS mode).
     """
-
-    #user = os.getlogin()
     nested_d = {}
     for png in tqdm(filepaths):
-        #current_d = nested_d
-        #tags = get_BIDS_fields_from_png(png)
-        #sub, ses, acq, run = tags['sub'], tags['ses'], tags['acq'], tags['run']
-        #for tag in [sub, ses, acq, run]:
-        #    if tag:
-        #        current_d = current_d.setdefault(tag, {})
-        ##set the default values
-        row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'date': '', 'duration': 0}
-        #current_d.update(row)
-        #current_d = nested_d
+        row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'user': '', 'date': '', 'duration': 0}
         nested_d[png] = row
-
     return nested_d
 
-    #print(json.dumps(nested_d, indent=4))
+
+def create_bids_json_dict(filepaths):
+    """
+    Given a list of BIDS-compliant filenames, create the nested BIDS json dictionary.
+    Structure: sub -> ses -> acq -> run -> leaf dict
+    """
+    nested_d = {}
+    for png in tqdm(filepaths):
+        current_d = nested_d
+        tags = get_BIDS_fields_from_png(png)
+        if tags is None:
+            continue  # Skip non-compliant files (shouldn't happen if validated first)
+        sub, ses, acq, run = tags['sub'], tags['ses'], tags['acq'], tags['run']
+        for tag in [sub, ses, acq, run]:
+            if tag:
+                current_d = current_d.setdefault(tag, {})
+        # Set the default values
+        row = {
+            'QA_status': 'yes',
+            'reason': '',
+            'user': '',
+            'date': '',
+            'sub': sub,
+            'ses': ses if ses else '',
+            'acq': acq if acq else '',
+            'run': run if run else ''
+        }
+        current_d.update(row)
+    return nested_d
 
 def get_tag_type(d):
     """
@@ -199,44 +229,58 @@ def set_file_permissions(file_path, group_name='p_masi', permissions=0o775):
     gid = grp.getgrnam(group_name).gr_gid
     os.chown(file_path, -1, gid)
 
-def convert_json_to_csv(json_dict, pipeline_path, permissions=False):
+def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False, permissions=False):
     """
-    Given a QA JSON dictionary, convert it to a CSV file
+    Given a QA JSON dictionary, convert it to a CSV file.
+    Handles both flat (non-BIDS) and nested (BIDS) structures.
     """
+    if bids_mode:
+        # BIDS mode: nested structure
+        leaf_dicts = get_leaf_dicts(json_dict)
 
-    # #get the leaf dictionaries
-    # leaf_dicts = get_leaf_dicts(json_dict)
+        # Make sure that the paths are unique and the dictionary has all the information
+        for paths, ds in leaf_dicts:
+            for path in paths:
+                ds[path[:3]] = path
+            if 'run' not in ds:
+                ds['run'] = ''
+            if 'acq' not in ds:
+                ds['acq'] = ''
+            if 'ses' not in ds:
+                ds['ses'] = ''
 
-    # #make sure that the paths are unique and the dictionary has all the information
-    # for paths,ds in leaf_dicts:
-    #     for path in paths:
-    #         ds[path[:3]] = path
-    #         assert path in ds.values(), f"Path {path} not in dict {ds}"
-    #     if 'run' not in ds:
-    #         ds['run'] = ''
-    #     if 'acq' not in ds:
-    #         ds['acq'] = ''
-    #     if 'ses' not in ds:
-    #         ds['ses'] = ''
-    # #now get a list of only the leaf dictionaries
-    # leaf_dicts = [ds for paths,ds in leaf_dicts]
-    # #finally, convert to a csv
-    # #header = ['sub', 'ses', 'acq', 'run', 'QA_status', 'reason', 'user', 'date']
-    header = ['filename', 'QA_status', 'reason', 'date', 'duration']
-    df = pd.DataFrame(json_dict).T
-    df = df[header]
-    #replace NaN with empty string
-    df = df.fillna('')
+        # Get a list of only the leaf dictionaries
+        leaf_dicts = [ds for paths, ds in leaf_dicts]
 
-    #df_sorted = df.sort_values(by=['sub', 'ses', 'acq', 'run'])
-    csv_path = pipeline_path / 'QA.csv'
-    df.to_csv(csv_path, index=False)
+        # BIDS CSV header
+        header = ['sub', 'ses', 'acq', 'run', 'QA_status', 'reason', 'user', 'date']
+        df = pd.DataFrame(leaf_dicts)
+        df = df[header]
+        df = df.fillna('')
+        df_sorted = df.sort_values(by=['sub', 'ses', 'acq', 'run'])
 
-    #set the permissions to be 775 and group to p_masi
-    #if permissions:
-    #    set_file_permissions(csv_path)
+        csv_path = pipeline_path / 'QA.csv'
+        df_sorted.to_csv(csv_path, index=False)
 
-    return df
+        if permissions:
+            set_file_permissions(csv_path)
+
+        return df_sorted
+    else:
+        # Non-BIDS mode: flat structure
+        header = ['filename', 'QA_status', 'reason', 'user', 'date', 'duration']
+        df = pd.DataFrame(json_dict).T
+        # Ensure all columns exist
+        for col in header:
+            if col not in df.columns:
+                df[col] = ''
+        df = df[header]
+        df = df.fillna('')
+
+        csv_path = pipeline_path / 'QA.csv'
+        df.to_csv(csv_path, index=False)
+
+        return df
 
 def read_csv_to_json(df):
     """
@@ -288,19 +332,24 @@ def compare_dicts(d1, d2):
 
 def are_unique_qa_dicts(dict_list):
     """
-    Given a list of qa dictionaries, check that no two dictionaries are the same
-
-    Only considers the sub, ses, acq, and run elements
+    Given a list of qa dictionaries, check that no two dictionaries are the same.
+    Works with both BIDS mode (sub, ses, acq, run) and non-BIDS mode (filename).
     """
-
     def add_items(curr_set, elt):
         curr_set.add(elt)
         return len(curr_set)
 
     seen = set()
     for d in tqdm(dict_list):
-        fname = d['filename']
-        if len(seen) == add_items(seen, fname):
+        # Check if this is BIDS mode (has 'sub' field) or non-BIDS mode (has 'filename' field)
+        if 'filename' in d:
+            # Non-BIDS mode
+            key = d['filename']
+        else:
+            # BIDS mode - use (sub, ses, acq, run) tuple
+            sub, ses, acq, run = d.get('sub', ''), d.get('ses', ''), d.get('acq', ''), d.get('run', '')
+            key = (sub, ses, acq, run)
+        if len(seen) == add_items(seen, key):
             return False
     return True
 
@@ -314,56 +363,79 @@ def assert_tags_in_dict(paths, leaf_dicts):
 
 def check_png_for_json(dicts, pngs):
     """
-    Given a list of QA json leaf dictionaries and list of pngs, make sure that every single json entry has a corresponding png file
+    Given a list of QA json leaf dictionaries and list of pngs, make sure that every single json entry has a corresponding png file.
+    Works with both BIDS mode and non-BIDS mode.
     """
-
-    #get the pipeline
-    #pipeline = get_BIDS_fields_from_png(pngs[0], return_pipeline=True)['pipeline']
-
     for dic in dicts:
-        #print(dic)
-        #print(pipeline)
-        #sub, ses, acq, run = dic['sub'], dic['ses'], dic['acq'], dic['run']
-        # png = f'{sub}_'
-        # if ses:
-        #     png += f"{ses}_"
-        # png += f"{pipeline}"
-        # if acq:
-        #     png += f"{acq}"
-        # if run:
-        #     png += f"{run}"
-        # png += ".png"
-        png = dic['filename']
-        #print(pngs)
-        assert png in pngs, f"PNG {png} from {dic} not in list of pngs"
+        if 'filename' in dic:
+            # Non-BIDS mode
+            png = dic['filename']
+            assert png in pngs, f"PNG {png} from {dic} not in list of pngs"
+        else:
+            # BIDS mode - need to reconstruct filename from BIDS tags
+            # Get pipeline from one of the pngs
+            if pngs:
+                sample_tags = get_BIDS_fields_from_png(pngs[0], return_pipeline=True)
+                if sample_tags:
+                    pipeline = sample_tags.get('pipeline', '')
+                    sub, ses, acq, run = dic.get('sub', ''), dic.get('ses', ''), dic.get('acq', ''), dic.get('run', '')
+                    png = f'{sub}_'
+                    if ses:
+                        png += f"{ses}_"
+                    png += f"{pipeline}"
+                    if acq:
+                        png += f"{acq}"
+                    if run:
+                        png += f"{run}"
+                    png += ".png"
+                    assert png in pngs, f"PNG {png} from {dic} not in list of pngs"
 
 def check_json_for_png(nested, pngs):
     """
-    Given a nested json and list of pngs, make sure that every single png file has a corresponding json entry.
-
+    Given a flat json and list of pngs, make sure that every single png file has a corresponding json entry.
     If it does not, then add the default values to the json file.
+    (Non-BIDS mode)
     """
-
-    #user = os.getlogin()
     keys = nested.keys()
     for png in pngs:
-        # tags = get_BIDS_fields_from_png(png)
-        # sub, ses, acq, run = tags['sub'], tags['ses'], tags['acq'], tags['run']
-        # current_d = nested
-        # for tag in [sub, ses, acq, run]:
-        #     if tag:
-        #         try:
-        #             current_d = current_d[tag]
-        #         except KeyError:
-        #             print(f"PNG {png} has no corresponding json entry. Adding to json file.")
-        #             current_d = current_d.setdefault(tag, {})
-        if png not in keys: #we need to add the png
-        #if current_d is blank, then we need to add the default values
-            row = {'filename':str(png), 'QA_status': 'yes', 'reason': '', 'date': '', 'duration': 0}
-            #current_d.update(row)
+        if png not in keys:
+            row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'user': '', 'date': '', 'duration': 0}
             nested[png] = row
-            #current_d.update(tags)
+    return nested
 
+
+def check_json_for_png_bids(nested, pngs):
+    """
+    Given a nested BIDS json and list of pngs, make sure that every single png file has a corresponding json entry.
+    If it does not, then add the default values to the json file.
+    (BIDS mode)
+    """
+    for png in pngs:
+        tags = get_BIDS_fields_from_png(png)
+        if tags is None:
+            continue  # Skip non-compliant files
+        sub, ses, acq, run = tags['sub'], tags['ses'], tags['acq'], tags['run']
+        current_d = nested
+        for tag in [sub, ses, acq, run]:
+            if tag:
+                try:
+                    current_d = current_d[tag]
+                except KeyError:
+                    print(f"PNG {png} has no corresponding json entry. Adding to json file.")
+                    current_d = current_d.setdefault(tag, {})
+        # If current_d is empty (new entry), add the default values
+        if not current_d or 'QA_status' not in current_d:
+            row = {
+                'QA_status': 'yes',
+                'reason': '',
+                'user': '',
+                'date': '',
+                'sub': sub,
+                'ses': ses if ses else '',
+                'acq': acq if acq else '',
+                'run': run if run else ''
+            }
+            current_d.update(row)
     return nested
 
 def assert_valid_qa_status(dict_list):
@@ -434,6 +506,15 @@ def validate_path_route():
         subdirs = [x for x in Path(path).glob('*') if x.is_dir()]
         subdir_count = len(subdirs)
     return jsonify({'valid': valid, 'errors': errors, 'subdir_count': subdir_count})
+
+
+@app.route('/set-options', methods=['POST'])
+def set_options():
+    """AJAX endpoint to set QA session options (BIDS mode, user name)."""
+    data = request.get_json()
+    session['bids_mode'] = data.get('bids_mode', False)
+    session['user_name'] = data.get('user_name', '').strip()
+    return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name']})
 
 @app.route('/browse-path', methods=['POST'])
 def browse_path():
@@ -522,69 +603,76 @@ def datasets(clicked_path):
 @require_qa_directory
 def render_montage(clicked_path, pipeline):
     qa_directory = get_qa_directory()
+    bids_mode = session.get('bids_mode', False)
+    user_name = session.get('user_name', '')
 
-    print(f"Loading images from: {clicked_path}/{pipeline}")
-
-    #define the current user (obtained from os)
-    #user = os.getlogin()
-
-    #get the current date and time as a string
-    #now = datetime.now()
+    print(f"Loading images from: {clicked_path}/{pipeline} (BIDS mode: {bids_mode})")
 
     # Get the list of PNG files in the pipeline directory
     pipeline_path = Path(qa_directory + '/' + clicked_path + '/' + pipeline)
-    pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]  # Convert paths to relative paths (recursive)
-    # make the pngs list sorted
+    pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
     pngs = sorted(pngs)
 
-    #pass image paths to montage.html so they can be loaded
+    # Pass image paths to montage.html so they can be loaded
     image_paths = [str(png) for png in pngs]
     # Extract paths relative to pipeline folder (e.g., "subdir/image.png" for recursive images)
     prefix = clicked_path + '/' + pipeline + '/'
     pngs_files = [x[len(prefix):] for x in pngs]
-    #print("Image paths:", image_paths)
 
-    #check to see if the json file exists. If it doesn't, create it
+    # BIDS mode: validate compliance first
+    if bids_mode:
+        compliant, non_compliant = validate_bids_compliance(pngs_files)
+        if non_compliant:
+            # Show BIDS errors page instead of crashing
+            return render_template('bids_errors.html',
+                                   non_compliant_files=non_compliant,
+                                   total_files=len(pngs_files),
+                                   clicked_path=clicked_path,
+                                   pipeline=pipeline)
+
+    # Check to see if the json file exists. If it doesn't, create it
     json_path = pipeline_path / 'QA.json'
-    session['json_path'] = str(json_path)  # Store in session for update_qa_dict
+    session['json_path'] = str(json_path)
+    session['bids_mode'] = bids_mode  # Store for update_qa_dict
+
     if not json_path.exists():
-        #create the json dictionary
         print("Creating new QA session...")
-        json_dict = create_json_dict(pngs_files)
-        #convert the json dictionary to a csv
-        df = convert_json_to_csv(json_dict, pipeline_path, permissions=False)
-        #the convert_json_to_csv function will alter the json_dict to include the sub, ses, acq, run tags in the leaf dictionaries
-            #so that is why we wait to write the json file until after the csv file is created
+        if bids_mode:
+            json_dict = create_bids_json_dict(pngs_files)
+        else:
+            json_dict = create_json_dict(pngs_files)
+        df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=bids_mode, permissions=False)
         save_json_file(json_path, json_dict, permissions=False)
-    
-    #otherwise, read the json file
     else:
-        #read the json file
         with open(json_path, 'r') as f:
             json_dict = json.load(f)
 
-        #check to make sure there are no duplicate QA dictionaries
-        paths, leaf_dicts = zip(*get_leaf_dicts(json_dict)) #unzips the tuples into their separate lists
-        assert are_unique_qa_dicts(leaf_dicts), "There are duplicate QA dictionaries in the json file {}. Please correct before attempting QA.".format(json_path)
+        # Check to make sure there are no duplicate QA dictionaries
+        paths, leaf_dicts = zip(*get_leaf_dicts(json_dict))
+        assert are_unique_qa_dicts(leaf_dicts), f"There are duplicate QA dictionaries in the json file {json_path}. Please correct before attempting QA."
 
-        #check to make sure that the paths to the json dictionaries are correct
+        # Check to make sure that the paths to the json dictionaries are correct
         assert_tags_in_dict(paths, leaf_dicts)
 
-        #check to make sure that the QA status is either 'yes', 'no', or 'maybe'
+        # Check to make sure that the QA status is either 'yes', 'no', or 'maybe'
         assert_valid_qa_status(leaf_dicts)
 
-        #check to make sure that every json entry has a corresponding png file (throw an error if not)
-        # Extract paths relative to pipeline folder (e.g., "subdir/image.png" for recursive images)
-        prefix = clicked_path + '/' + pipeline + '/'
-        pngs_files = [x[len(prefix):] for x in pngs]
+        # Check to make sure that every json entry has a corresponding png file
         check_png_for_json(leaf_dicts, [str(x) for x in pngs_files])
 
-        #if the png does not have a corresponding json entry, it needs to be added
-        json_dict = check_json_for_png(json_dict, pngs_files)
+        # If the png does not have a corresponding json entry, it needs to be added
+        if bids_mode:
+            json_dict = check_json_for_png_bids(json_dict, pngs_files)
+        else:
+            json_dict = check_json_for_png(json_dict, pngs_files)
 
-
-    #pass the dataframe to montage.html as a json
-    return render_template('montage.html', clicked_path=clicked_path, pipeline=pipeline, image_paths=image_paths, json_dict=json_dict)
+    return render_template('montage.html',
+                           clicked_path=clicked_path,
+                           pipeline=pipeline,
+                           image_paths=image_paths,
+                           json_dict=json_dict,
+                           bids_mode=bids_mode,
+                           user_name=user_name)
 
     #maybe assert the following python functions:
 
@@ -651,11 +739,12 @@ def update_qa_dict():
     """
     This function is called to update the QA JSON and CSV with the new QA status and reason
     """
-    # Get json_path from session
+    # Get json_path and bids_mode from session
     json_path_str = session.get('json_path')
     if not json_path_str:
         return jsonify({'status': 'error', 'message': 'No active QA session'}), 400
     json_path = Path(json_path_str)
+    bids_mode = session.get('bids_mode', False)
 
     # Get the JSON data from the request
     nested_dict = request.json
@@ -663,8 +752,8 @@ def update_qa_dict():
     # Push the changes of the json file
     save_json_file(json_path, nested_dict)
 
-    # also update the csv file
-    _ = convert_json_to_csv(nested_dict, json_path.parent)
+    # Also update the csv file (with appropriate mode)
+    _ = convert_json_to_csv(nested_dict, json_path.parent, bids_mode=bids_mode)
 
     # Return a JSON response with the updated dictionary
     return jsonify({'status': 'success', 'updatedDict': nested_dict})

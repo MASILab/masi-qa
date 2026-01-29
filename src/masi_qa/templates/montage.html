@@ -205,6 +205,8 @@
         const imagePaths = JSON.parse('{{ image_paths|tojson|safe }}'); /* const imagePaths = {{ image_paths|tojson }}; */
         const clickedPath = '{{ clicked_path }}';
         const pipeline = '{{ pipeline }}';
+        const bidsMode = {{ bids_mode|tojson }};  // BIDS mode flag from server
+        const userName = '{{ user_name|default("", true) }}';  // User name from server
         let currentImageIndex = 0; // Track current image index
         let isLooping = false; // Flag to track if looping is active
         let updateInterval = null; // Interval reference for automatic update
@@ -555,9 +557,14 @@
             // Calculate duration spent on this image
             const viewDuration = imageViewStartTime ? Math.round((Date.now() - imageViewStartTime) / 1000) : 0;
 
-            // Always update date and duration when navigating away (viewing = reviewing)
+            // Always update date, user, and duration when navigating away (viewing = reviewing)
             qaDict['date'] = getDateTime();
-            qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            if (userName) {
+                qaDict['user'] = userName;  // Track reviewer name
+            }
+            if (!bidsMode) {
+                qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            }
 
             // Also update status and reason if changed
             if (qaStatus !== qaDict['QA_status'] || reasonInput !== qaDict['reason']) {
@@ -634,51 +641,53 @@
 
         // Function to extract BIDS fields from a PNG filename. Returns a dictionary with the BIDS fields
         function getBIDSFieldsFromPNG(filename, returnPipeline = false) {
-            // // Define the regular expression pattern
-            // // Note: JavaScript regex does not have named capture groups directly like Python's (?P<name>pattern)
-            // // Instead, we use positional capture groups and then access them by index.
-            // //var pattern = /(sub-\w+)(?:_(ses-\w+))?(?:_(\w+))(?:(acq-\w+))?(?:(run-\d{1,2}))?.png/;
-            // //var pattern = /(sub-\w+)(?:_(ses-\w+))?_([A-Za-z0-9\.]*)(?:(acq-\w+))?(?:(run-\d{1,2}))?\.png/;
-            // var pattern = /(sub-\w+)(?:_(ses-\w+))?_([A-Za-z0-9\.\-]+?)(?=acq\-|run\-|\.png)(?:(acq-\w+))?(?:(run-\d{1,2}))?\.png/;
-            // var match = filename.match(pattern);
+            if (!bidsMode) {
+                // Non-BIDS mode: just return filename
+                return { filename: filename };
+            }
 
-            // // Assert that a match is found
-            // if (!match) {
-            //     throw Error(`Filename ${filename} does not match the expected pattern.`);
-            // }
+            // BIDS mode: parse the filename for BIDS fields
+            var pattern = /(sub-\w+)(?:_(ses-\w+))?_([A-Za-z0-9\.\-]+?)(?=acq\-|run\-|\.png)(?:(acq-\w+))?(?:(run-\d{1,4}))?\.png/;
+            var match = filename.match(pattern);
 
-            // // Extract BIDS fields from the match groups
-            // var tags = {
-            //     sub: match[1],
-            //     ses: match[2] ? match[2] : undefined,
-            //     acq: match[4] ? match[4] : undefined,
-            //     run: match[5] ? match[5] : undefined
-            // };
+            if (!match) {
+                console.error(`Filename ${filename} does not match BIDS pattern`);
+                return { filename: filename };  // Fallback to filename
+            }
 
-            // // Optionally include the pipeline field if specified
-            // if (returnPipeline && match[3]) {
-            //     tags.pipeline = match[3];
-            // }
             var tags = {
-                filename: filename
+                sub: match[1],
+                ses: match[2] ? match[2] : undefined,
+                acq: match[4] ? match[4] : undefined,
+                run: match[5] ? match[5] : undefined
             };
+
+            if (returnPipeline && match[3]) {
+                tags.pipeline = match[3];
+            }
             return tags;
         }
 
         // Function to retrieve a leaf dictionary from a nested dictionary given the BIDS tags
         function getLeafDict(nestedDict, tags) {
-            console.log('Tags:', tags);
-            //var leafDict = nestedDict[tags.sub];
-            var leafDict = nestedDict[tags.filename];
-            // if (tags.ses !== undefined) {
-            //     leafDict = leafDict[tags.ses];
-            // }
-            // if (tags.acq !== undefined) {
-            //     leafDict = leafDict[tags.acq];
-            // }
-            // if (tags.run !== undefined) {
-            //     leafDict = leafDict[tags.run];
-            // }
+            console.log('Tags:', tags, 'BIDS mode:', bidsMode);
+
+            if (!bidsMode) {
+                // Non-BIDS mode: flat structure keyed by filename
+                return nestedDict[tags.filename];
+            }
+
+            // BIDS mode: nested structure
+            var leafDict = nestedDict[tags.sub];
+            if (tags.ses !== undefined) {
+                leafDict = leafDict[tags.ses];
+            }
+            if (tags.acq !== undefined) {
+                leafDict = leafDict[tags.acq];
+            }
+            if (tags.run !== undefined) {
+                leafDict = leafDict[tags.run];
+            }
             return leafDict;
         }
 
@@ -720,7 +729,12 @@
 
             // Update the dictionary
             qaDict['date'] = getDateTime();
-            qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            if (userName) {
+                qaDict['user'] = userName;  // Track reviewer name
+            }
+            if (!bidsMode) {
+                qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            }
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
 
@@ -812,7 +826,12 @@
 
             // Update the dictionary
             qaDict['date'] = getDateTime();
-            qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            if (userName) {
+                qaDict['user'] = userName;  // Track reviewer name
+            }
+            if (!bidsMode) {
+                qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+            }
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
 
