@@ -15,7 +15,7 @@ Kim, Michael E., et al. "Scalable quality control on processing of large diffusi
 - Three-state QA classification: Yes, No, Maybe
 - Optional reason field for documenting QA decisions
 - **Reviewer name tracking** for multi-user workflows
-- **Optional BIDS compliance mode** with filename validation
+- **BIDS compliance mode** via separate `masi-bids-qa` command
 - Automatic tracking of review timestamps and duration
 - Persistent storage via JSON with CSV export
 - Autoplay mode for rapid image cycling
@@ -50,18 +50,17 @@ pip install .
 
 1. Run the application:
    ```bash
-   masi-qa
+   masi-qa           # Standard mode (any PNG filename)
+   masi-bids-qa      # BIDS mode (requires BIDS-compliant filenames)
    ```
 
 2. Open your browser to http://localhost:5000
 
 3. Enter your **reviewer name** (required)
 
-4. Optionally enable **BIDS compliance mode** if your files follow BIDS naming conventions
+4. Select a root directory, dataset, and pipeline
 
-5. Select a root directory, dataset, and pipeline
-
-6. Click "Continue to QA" to begin review
+5. Click "Continue to QA" to begin review
 
 ### Debug Mode
 
@@ -78,9 +77,9 @@ Before starting a QA session, configure these settings on the selection page:
 
 Enter your name to track who reviewed each image. This is recorded in the `user` field of the output files. The field turns green when filled.
 
-### BIDS Compliance Mode (Optional)
+### BIDS Compliance Mode
 
-When enabled, the application validates that all PNG filenames follow the [BIDS](https://bids.neuroimaging.io/) naming convention:
+Use the `masi-bids-qa` command to run in BIDS mode. This validates that all PNG filenames follow the [BIDS](https://bids.neuroimaging.io/) naming convention:
 
 ```
 sub-<subject>_ses-<session>_<pipeline>.png
@@ -92,7 +91,7 @@ sub-<subject>_<pipeline>.png  (if no session)
 **Required**: `sub-*` (subject identifier)
 **Optional**: `ses-*` (session), `acq-*` (acquisition), `run-*` (run number)
 
-If any files are non-compliant, an error page will list them with the expected format. You can then go back and either rename the files or disable BIDS mode.
+If any files are non-compliant, an error page will list them with the expected format. You can then rename the files or use `masi-qa` (Standard mode) instead.
 
 When BIDS mode is enabled:
 - Output uses a nested JSON structure organized by BIDS tags
@@ -100,10 +99,10 @@ When BIDS mode is enabled:
 
 ### Switching Between Modes
 
-If you open a dataset that already has QA data in a different format than your selected mode, the application will detect this mismatch and offer two options:
+If you open a dataset that already has QA data in a different format than your current mode, the application will detect this mismatch and offer two options:
 
-1. **Go Back**: Return to the selection page and change your mode to match the existing data
-2. **Convert Data**: Convert the existing QA data to match your selected mode
+1. **Restart with different command**: Exit and restart with `masi-qa` or `masi-bids-qa` to match the existing data format
+2. **Convert Data**: Convert the existing QA data to match your current mode
 
 Converting creates a backup (`QA.json.backup`) before modifying. Note that converting from Standard to BIDS mode requires all filenames to be BIDS-compliant.
 
