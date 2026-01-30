@@ -187,8 +187,10 @@
         <div class="info-box">
             <div class="info-box-title">Your Options</div>
             <ol>
-                <li><strong>Go Back:</strong> Return to selection and change your mode to match the existing data ({{ 'BIDS' if existing_format == 'bids' else 'Standard' }} mode)</li>
-                <li><strong>Convert Data:</strong> Convert the existing QA data to {{ 'BIDS' if selected_mode == 'bids' else 'Standard' }} format to match your selection</li>
+                <li><strong>Restart with different command:</strong> Exit and restart with
+                    <code style="background:#f5f5f5;padding:2px 6px;border-radius:3px;">{{ 'masi-bids-qa' if existing_format == 'bids' else 'masi-qa' }}</code>
+                    to match the existing data ({{ 'BIDS' if existing_format == 'bids' else 'Standard' }} mode)</li>
+                <li><strong>Convert Data:</strong> Convert the existing QA data to {{ 'BIDS' if selected_mode == 'bids' else 'Standard' }} format to match your current mode</li>
             </ol>
         </div>
 
@@ -201,7 +203,7 @@
         <div class="btn-group">
             <button type="button" class="btn btn-back" onclick="window.location.href='/'">
                 <span>&larr;</span>
-                <span>Back to Selection</span>
+                <span>Select Different Dataset</span>
             </button>
             {% if not conversion_error %}
             <form action="{{ url_for('convert_qa_format', clicked_path=clicked_path, pipeline=pipeline) }}" method="POST" style="display: inline;">

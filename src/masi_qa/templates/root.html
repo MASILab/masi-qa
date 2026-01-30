@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Select QA Directory</title>
+    <title>{{ 'MASI-BIDS-QA' if bids_mode else 'MASI-QA' }} - Select QA Directory</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -326,31 +326,20 @@
             color: #c62828;
             margin-left: 3px;
         }
-        .checkbox-label {
-            display: flex !important;
-            align-items: center;
-            cursor: pointer;
-        }
-        .checkbox-label input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            margin-right: 10px;
-            cursor: pointer;
-        }
-        .setting-hint {
-            display: block;
-            color: #888;
-            font-size: 12px;
-            margin-top: 5px;
-            margin-left: 28px;
-        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header-bar">
-            <h1>Select QA Directory</h1>
-            <p class="subtitle">Enter your name, then browse to select a root directory, dataset, and pipeline to begin QA review.</p>
+            <h1>{{ 'MASI-BIDS-QA' if bids_mode else 'MASI-QA' }}</h1>
+            <p class="subtitle">
+                {% if bids_mode %}
+                <strong>BIDS Mode:</strong> Requires filenames like sub-XX_ses-YY_pipeline.png<br>
+                {% else %}
+                <strong>Standard Mode:</strong> Any PNG filename format accepted<br>
+                {% endif %}
+                Enter your name, then browse to select a root directory, dataset, and pipeline to begin QA review.
+            </p>
         </div>
 
         <!-- QA Settings Section (moved above selection grid) -->
@@ -363,14 +352,6 @@
                 <input type="text" id="userName" placeholder="Enter your name (required)" oninput="updateSettingsState()">
             </div>
 
-            <!-- BIDS Compliance Checkbox -->
-            <div class="setting-item">
-                <label class="checkbox-label">
-                    <input type="checkbox" id="bidsMode">
-                    <span>Enforce BIDS compliance</span>
-                </label>
-                <span class="setting-hint">Requires filenames like: sub-XX_ses-YY_pipeline.png</span>
-            </div>
         </div>
 
         <div class="selection-grid">
@@ -841,7 +822,6 @@
 
         async function continueToQA() {
             const userName = document.getElementById('userName').value.trim();
-            const bidsMode = document.getElementById('bidsMode').checked;
 
             // Validate all required fields
             if (!userName) {
@@ -855,12 +835,12 @@
             }
 
             // Save QA settings to session first
+            // Note: BIDS mode is determined by which command was used (masi-qa vs masi-bids-qa)
             try {
                 const response = await fetch('/set-options', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        bids_mode: bidsMode,
                         user_name: userName
                     })
                 });

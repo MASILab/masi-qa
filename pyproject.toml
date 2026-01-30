@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 masi-qa = "masi_qa.app_montage:main"
+masi-bids-qa = "masi_qa.app_montage:main_bids"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -54,6 +54,10 @@ app.secret_key = 'supersecretkey'
 # Defaults are safe for import (e.g., when installed as a package).
 args = argparse.Namespace(debug=False)
 
+# Global BIDS mode flag - set at startup based on which entry point was used
+# This determines whether the app runs in Standard mode (masi-qa) or BIDS mode (masi-bids-qa)
+BIDS_MODE = False
+
 def get_qa_directory():
     """Get QA directory from session, falling back to command-line arg."""
     if 'qa_directory' in session:
@@ -653,9 +657,11 @@ def validate_path_route():
 
 @app.route('/set-options', methods=['POST'])
 def set_options():
-    """AJAX endpoint to set QA session options (BIDS mode, user name)."""
+    """AJAX endpoint to set QA session options (user name)."""
     data = request.get_json()
-    session['bids_mode'] = data.get('bids_mode', False)
+    # BIDS mode is determined by which entry point was used (masi-qa vs masi-bids-qa)
+    # We ignore any bids_mode sent from client and use the global setting
+    session['bids_mode'] = BIDS_MODE
     session['user_name'] = data.get('user_name', '').strip()
     return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name']})
 
@@ -776,10 +782,12 @@ def browse_path():
 @app.route('/')
 def index():
     qa_directory = get_qa_directory()
-    # Pass qa_directory to template (may be None if not set)
+    # Pass qa_directory and bids_mode to template (qa_directory may be None if not set)
     if args.debug:
         print("QA Directory:", qa_directory)
-    return render_template('root.html', qa_directory=qa_directory)
+    # Set session bids_mode from global at each page load to ensure consistency
+    session['bids_mode'] = BIDS_MODE
+    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE)
 
 @app.route('/datasets', methods=['POST'])
 @require_qa_directory
@@ -982,8 +990,10 @@ def update_qa_dict():
     # Return a JSON response with the updated dictionary
     return jsonify({'status': 'success', 'updatedDict': nested_dict})
 
-def main():
-    global args
+def _run_app(bids_mode=False):
+    """Shared startup logic for both entry points."""
+    global args, BIDS_MODE
+    BIDS_MODE = bids_mode
     args = pa()
 
     # Suppress Flask/Werkzeug request logging unless in debug mode
@@ -991,14 +1001,20 @@ def main():
         log = logging.getLogger('werkzeug')
         log.setLevel(logging.ERROR)
 
+    app_name = "MASI-BIDS-QA" if BIDS_MODE else "MASI-QA"
+    mode_name = "BIDS" if BIDS_MODE else "Standard"
+
     print()
     print("=" * 50)
-    print(f"  MASI-QA v{__version__}")
+    print(f"  {app_name} v{__version__}")
     print("=" * 50)
     print()
     print("  Authors: Michael Kim, Yihao Liu")
     print("  MASI Lab @ Vanderbilt University")
     print("  License: MIT")
+    print()
+    print(f"  Mode: {mode_name}")
+
     # Determine port
     if args.port:
         port = args.port
@@ -1017,6 +1033,17 @@ def main():
     print()
 
     app.run(host='0.0.0.0', port=port, debug=args.debug)
+
+
+def main():
+    """Entry point for masi-qa (Standard mode)."""
+    _run_app(bids_mode=False)
+
+
+def main_bids():
+    """Entry point for masi-bids-qa (BIDS compliance mode)."""
+    _run_app(bids_mode=True)
+
 
 if __name__ == "__main__":
     main()
