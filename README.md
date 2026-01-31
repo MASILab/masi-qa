@@ -2,7 +2,7 @@
 
 A Flask-based web application for reviewing and annotating medical QA images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data.
 
-Supports both **BIDS-agnostic** and **BIDS-compliant** modes. For BIDS-only workflows, see [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA).
+Supports both Standard and BIDS-compliant modes. For BIDS-only workflows, see [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA).
 
 If you use this for your research, please cite the following paper:
 
@@ -14,8 +14,8 @@ Kim, Michael E., et al. "Scalable quality control on processing of large diffusi
 - Keyboard-driven workflow for fast QA review
 - Three-state QA classification: Yes, No, Maybe
 - Optional reason field for documenting QA decisions
-- **Reviewer name tracking** for multi-user workflows
-- **BIDS compliance mode** via separate `masi-bids-qa` command
+- Reviewer name tracking for multi-user workflows
+- BIDS compliance mode via separate `masi-bids-qa` command
 - Automatic tracking of review timestamps and duration
 - Persistent storage via JSON with CSV export
 - Autoplay mode for rapid image cycling
@@ -37,15 +37,6 @@ cd masi-qa
 pip install .
 ```
 
-### Requirements
-
-- Python >= 3.8
-- Flask 2.2.2
-- pandas 2.0.3
-- numpy < 2.0
-- tqdm
-- Werkzeug 2.2.2
-
 ## Quick Start
 
 1. Run the application:
@@ -54,57 +45,28 @@ pip install .
    masi-bids-qa      # BIDS mode (requires BIDS-compliant filenames)
    ```
 
-2. Open your browser to http://localhost:5000
+2. Open the URL shown in the terminal (port is automatically selected)
 
-3. Enter your **reviewer name** (required)
+3. Select a root directory, dataset, and pipeline
 
-4. Select a root directory, dataset, and pipeline
+4. Click "Continue to QA" to begin review
 
-5. Click "Continue to QA" to begin review
+## Keyboard Shortcuts
 
-### Debug Mode
+| Key | Action |
+|-----|--------|
+| `←` / `→` | Navigate between images |
+| `Q` | Mark as "Yes" (pass) |
+| `W` | Mark as "No" (fail) |
+| `E` | Mark as "Maybe" (uncertain) |
+| `N` | Jump to next unreviewed image |
+| `Space` | Toggle autoplay mode |
+| `Enter` | Focus/unfocus reason input field |
 
-Enable Flask debug mode with hot reload:
-```bash
-masi-qa --debug
-```
+### Quick Navigation
 
-## QA Settings
-
-Before starting a QA session, configure these settings on the selection page:
-
-### Reviewer Name (Required)
-
-Enter your name to track who reviewed each image. This is recorded in the `user` field of the output files. The field turns green when filled.
-
-### BIDS Compliance Mode
-
-Use the `masi-bids-qa` command to run in BIDS mode. This validates that all PNG filenames follow the [BIDS](https://bids.neuroimaging.io/) naming convention:
-
-```
-sub-<subject>_ses-<session>_<pipeline>.png
-sub-<subject>_ses-<session>_<pipeline>acq-<acquisition>.png
-sub-<subject>_ses-<session>_<pipeline>run-<run>.png
-sub-<subject>_<pipeline>.png  (if no session)
-```
-
-**Required**: `sub-*` (subject identifier)
-**Optional**: `ses-*` (session), `acq-*` (acquisition), `run-*` (run number)
-
-If any files are non-compliant, an error page will list them with the expected format. You can then rename the files or use `masi-qa` (Standard mode) instead.
-
-When BIDS mode is enabled:
-- Output uses a nested JSON structure organized by BIDS tags
-- CSV includes columns: `sub, ses, acq, run, QA_status, reason, user, date`
-
-### Switching Between Modes
-
-If you open a dataset that already has QA data in a different format than your current mode, the application will detect this mismatch and offer two options:
-
-1. **Restart with different command**: Exit and restart with `masi-qa` or `masi-bids-qa` to match the existing data format
-2. **Convert Data**: Convert the existing QA data to match your current mode
-
-Converting creates a backup (`QA.json.backup`) before modifying. Note that converting from Standard to BIDS mode requires all filenames to be BIDS-compliant.
+- **Go to specific image**: Use the "Go to #" input field next to the image counter and press Enter
+- **Next unreviewed**: Press `N` to skip already-reviewed images and jump to the next one that hasn't been reviewed yet
 
 ## Expected Directory Structure
 
@@ -124,28 +86,35 @@ Converting creates a backup (`QA.json.backup`) before modifying. Note that conve
 
 Each pipeline directory should contain PNG files only.
 
-## Keyboard Shortcuts
+## Modes
 
-| Key | Action |
-|-----|--------|
-| `←` / `→` | Navigate between images |
-| `Q` | Mark as "Yes" (pass) |
-| `W` | Mark as "No" (fail) |
-| `E` | Mark as "Maybe" (uncertain) |
-| `N` | Jump to next unreviewed image |
-| `Space` | Toggle autoplay mode |
-| `Enter` | Focus/unfocus reason input field |
+### Standard Mode (`masi-qa`)
 
-### Quick Navigation
+Works with any PNG filename. This is the default mode for general use.
 
-- **Go to specific image**: Use the "Go to #" input field next to the image counter and press Enter
-- **Next unreviewed**: Press `N` to skip already-reviewed images and jump to the next one that hasn't been reviewed yet
+### BIDS Mode (`masi-bids-qa`)
+
+Validates that all PNG filenames follow the [BIDS](https://bids.neuroimaging.io/) naming convention:
+
+```
+sub-<subject>_ses-<session>_<pipeline>.png
+sub-<subject>_<pipeline>.png  (if no session)
+```
+
+**Required**: `sub-*` (subject identifier)
+**Optional**: `ses-*` (session), `acq-*` (acquisition), `run-*` (run number)
+
+If any files are non-compliant, an error page will list them. You can rename the files or use `masi-qa` instead.
+
+### Switching Between Modes
+
+If you open a dataset that has existing QA data in a different format, the application will detect this and offer options to either restart with the matching command or convert the existing data. Converting creates a backup (`QA.json.backup`) before modifying.
 
 ## QA Data Format
 
-QA results are stored in `QA.json` and exported to `QA.csv`. The format depends on whether BIDS mode is enabled.
+QA results are stored in `QA.json` and exported to `QA.csv`. The format depends on the mode.
 
-### Standard Mode (Non-BIDS)
+### Standard Mode
 
 ```json
 {
@@ -187,15 +156,29 @@ QA results are stored in `QA.json` and exported to `QA.csv`. The format depends 
 
 | Field | Description |
 |-------|-------------|
-| `filename` | Name of the image file (non-BIDS mode only) |
+| `filename` | Name of the image file (Standard mode only) |
 | `sub/ses/acq/run` | BIDS identifiers (BIDS mode only) |
 | `QA_status` | Review status: `yes`, `no`, or `maybe` |
 | `reason` | Optional text explaining the QA decision |
 | `user` | Name of the reviewer (empty until reviewed) |
 | `date` | Timestamp of the last review (empty until reviewed) |
-| `duration` | Total seconds spent viewing the image (non-BIDS mode only) |
+| `duration` | Total seconds spent viewing the image (Standard mode only) |
 
-A `QA.csv` file is automatically generated alongside the JSON for easy data analysis.
+## Advanced Options
+
+### Debug Mode
+
+Enable Flask debug mode with hot reload for development:
+```bash
+masi-qa --debug
+```
+
+### Custom Port
+
+Specify a port manually (default: auto-detect from 5000-5009):
+```bash
+masi-qa --port 8080
+```
 
 ## Important Notes
 
