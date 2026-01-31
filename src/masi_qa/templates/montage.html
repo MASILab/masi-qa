@@ -88,6 +88,23 @@
         .hidden {
             display: none; /* Utility class to hide elements */
         }
+        .toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #4CAF50;
+            color: white;
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 1000;
+            cursor: pointer;
+        }
+        .toast.hidden {
+            display: none;
+        }
 
         /* Navigation header */
         .nav-header {
@@ -199,6 +216,7 @@
     <div class="loading-bar-container">
         <div id="loadingBar" class="loading-bar-progress"></div>
     </div>
+    <div id="toast" class="toast hidden"></div>
 
     <script>
         // Extract image paths from template data
@@ -245,6 +263,10 @@
                 if (loadedCount === totalImages) {
                     hideLoadingBar();
                     initializeMontage();
+                    // Check if all images are already reviewed on page load
+                    if (checkAllReviewed()) {
+                        showToast('All images have been reviewed!');
+                    }
                 }
             }
 
@@ -589,6 +611,10 @@
             })
             .then(data => {
                 console.log('Updated QA Dictionary:', data);
+                // Check if all images are now reviewed
+                if (checkAllReviewed()) {
+                    showToast('All images have been reviewed!');
+                }
             })
             .catch(error => {
                 console.error('Error updating QA dictionary:', error);
@@ -712,6 +738,28 @@
             // console.log('Username:', '{{ user }}');
         }
 
+        // Function to show a toast notification
+        function showToast(message, duration = 4000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), duration);
+        }
+
+        // Function to check if all images have been reviewed
+        function checkAllReviewed() {
+            for (let i = 0; i < imagePaths.length; i++) {
+                const imagePath = imagePaths[i];
+                const imageName = getRelativeImagePath(imagePath);
+                const bidsFields = getBIDSFieldsFromPNG(imageName, false);
+                const qaDict = getLeafDict(nestedDict, bidsFields);
+                if (!qaDict['date'] || qaDict['date'] === '') {
+                    return false;  // Found an unreviewed image
+                }
+            }
+            return true;  // All images reviewed
+        }
+
         // Function to save current image state (extracted for reuse)
         async function saveCurrentImageState() {
             const qaButtons = document.querySelectorAll('.qa-button');
@@ -804,7 +852,7 @@
                 }
             }
             // All images have been reviewed
-            console.log('All images have been reviewed');
+            showToast('All images have been reviewed!');
         }
 
         // Function to save current QA state and navigate back to selection

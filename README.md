@@ -20,6 +20,7 @@ Kim, Michael E., et al. "Scalable quality control on processing of large diffusi
 - Persistent storage via JSON with CSV export
 - Autoplay mode for rapid image cycling
 - Quick navigation: jump to specific image or next unreviewed
+- Completion notification when all images have been reviewed
 
 ## Installation
 
@@ -67,6 +68,7 @@ pip install .
 
 - **Go to specific image**: Use the "Go to #" input field next to the image counter and press Enter
 - **Next unreviewed**: Press `N` to skip already-reviewed images and jump to the next one that hasn't been reviewed yet
+- **Completion notification**: A green toast notification appears when all images have been reviewed. This triggers automatically when you review the last unreviewed image, when you press `N` with no unreviewed images remaining, or when you open a dataset where all images were already reviewed
 
 ## Expected Directory Structure
 
