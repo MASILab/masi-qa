@@ -84,7 +84,7 @@
         .select-root-bar {
             background-color: #fff3e0;
             padding: 10px 15px;
-            border-bottom: 1px solid #ffcc80;
+            border-top: 1px solid #ffcc80;
             flex-shrink: 0;
         }
         .btn-select-root {
@@ -361,14 +361,14 @@
                 <div class="breadcrumb" id="breadcrumb">
                     <span class="loading">Loading...</span>
                 </div>
+                <div class="item-list" id="rootList">
+                    <div class="loading">Loading directories...</div>
+                </div>
                 <div class="select-root-bar">
                     <button type="button" class="btn-select-root" onclick="selectCurrentAsRoot()">
                         <span class="icon">&#10004;</span>
                         <span>Select This Directory as Root</span>
                     </button>
-                </div>
-                <div class="item-list" id="rootList">
-                    <div class="loading">Loading directories...</div>
                 </div>
             </div>
 
