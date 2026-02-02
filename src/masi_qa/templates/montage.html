@@ -576,8 +576,8 @@
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
 
-            // Calculate duration spent on this image
-            const viewDuration = imageViewStartTime ? Math.round((Date.now() - imageViewStartTime) / 1000) : 0;
+            // Calculate duration spent on this image (in seconds with millisecond precision)
+            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
 
             // Always update date, user, and duration when navigating away (viewing = reviewing)
             qaDict['date'] = getDateTime();
@@ -585,7 +585,7 @@
                 qaDict['user'] = userName;  // Track reviewer name
             }
             if (!bidsMode) {
-                qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
             }
 
             // Also update status and reason if changed
@@ -772,8 +772,8 @@
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
 
-            // Calculate duration spent on this image
-            const viewDuration = imageViewStartTime ? Math.round((Date.now() - imageViewStartTime) / 1000) : 0;
+            // Calculate duration spent on this image (in seconds with millisecond precision)
+            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
 
             // Update the dictionary
             qaDict['date'] = getDateTime();
@@ -781,7 +781,7 @@
                 qaDict['user'] = userName;  // Track reviewer name
             }
             if (!bidsMode) {
-                qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
             }
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
@@ -869,8 +869,8 @@
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
 
-            // Calculate duration spent on this image
-            const viewDuration = imageViewStartTime ? Math.round((Date.now() - imageViewStartTime) / 1000) : 0;
+            // Calculate duration spent on this image (in seconds with millisecond precision)
+            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
 
             // Update the dictionary
             qaDict['date'] = getDateTime();
@@ -878,7 +878,7 @@
                 qaDict['user'] = userName;  // Track reviewer name
             }
             if (!bidsMode) {
-                qaDict['duration'] = (qaDict['duration'] || 0) + viewDuration;
+                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
             }
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
