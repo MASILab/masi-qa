@@ -219,6 +219,9 @@
     <div id="toast" class="toast hidden"></div>
 
     <script>
+        // Debug flag - set to true to enable console logging
+        const DEBUG = false;
+
         // Extract image paths from template data
         const imagePaths = JSON.parse('{{ image_paths|tojson|safe }}'); /* const imagePaths = {{ image_paths|tojson }}; */
         const clickedPath = '{{ clicked_path }}';
@@ -696,7 +699,7 @@
 
         // Function to retrieve a leaf dictionary from a nested dictionary given the BIDS tags
         function getLeafDict(nestedDict, tags) {
-            console.log('Tags:', tags, 'BIDS mode:', bidsMode);
+            if (DEBUG) console.log('Tags:', tags, 'BIDS mode:', bidsMode);
 
             if (!bidsMode) {
                 // Non-BIDS mode: flat structure keyed by filename

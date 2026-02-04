@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Permission Error</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #ffebee;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #c62828;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        .error-box {
+            background-color: #ffebee;
+            border: 1px solid #ef9a9a;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .error-box-title {
+            font-weight: bold;
+            color: #c62828;
+            margin-bottom: 10px;
+        }
+        .info-box {
+            background-color: #e3f2fd;
+            border: 1px solid #90caf9;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .info-box-title {
+            font-weight: bold;
+            color: #1565c0;
+            margin-bottom: 10px;
+        }
+        .path-info {
+            background-color: #f5f5f5;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .path-label {
+            font-weight: bold;
+            color: #666;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .path-value {
+            font-family: monospace;
+            color: #333;
+            word-break: break-all;
+        }
+        .file-list {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .file-list li {
+            font-family: monospace;
+            margin: 5px 0;
+        }
+        .file-status {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 3px;
+            margin-left: 10px;
+        }
+        .file-status.missing {
+            background-color: #fff3e0;
+            color: #e65100;
+        }
+        .file-status.not-writable {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .command-box {
+            background-color: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            margin: 15px 0;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .command-box .comment {
+            color: #78909c;
+        }
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+        }
+        .btn-back {
+            background-color: #9e9e9e;
+            color: white;
+        }
+        .btn-back:hover {
+            background-color: #757575;
+        }
+        .note {
+            font-size: 13px;
+            color: #666;
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #fafafa;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Permission Error</h1>
+        <p class="subtitle">Cannot write QA files due to insufficient permissions.</p>
+
+        <div class="path-info">
+            <span class="path-label">Dataset:</span>
+            <span class="path-value">{{ clicked_path }}</span>
+        </div>
+
+        <div class="path-info">
+            <span class="path-label">Pipeline:</span>
+            <span class="path-value">{{ pipeline }}</span>
+        </div>
+
+        <div class="path-info">
+            <span class="path-label">Full Path:</span>
+            <span class="path-value">{{ pipeline_path }}</span>
+        </div>
+
+        <div class="error-box">
+            <div class="error-box-title">Permission Issues Detected</div>
+            <p>The following QA files cannot be {{ 'created' if files_missing else 'modified' }}:</p>
+            <ul class="file-list">
+                {% for file_info in file_issues %}
+                <li>
+                    {{ file_info.name }}
+                    <span class="file-status {{ file_info.status }}">{{ file_info.message }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+
+        <div class="info-box">
+            <div class="info-box-title">How to Fix</div>
+            <p>Run one of the following commands to grant write access:</p>
+
+            {% if files_missing %}
+            <p><strong>Option 1:</strong> Grant write permission to the directory:</p>
+            <div class="command-box"><span class="comment"># Add write permission for your user</span>
+chmod u+w "{{ pipeline_path }}"</div>
+
+            <p><strong>Option 2:</strong> If you need group write access:</p>
+            <div class="command-box"><span class="comment"># Add write permission for group</span>
+chmod g+w "{{ pipeline_path }}"</div>
+
+            {% else %}
+            <p><strong>Option 1:</strong> Grant write permission to the QA files:</p>
+            <div class="command-box"><span class="comment"># Add write permission for your user</span>
+{% for file_info in file_issues %}chmod u+w "{{ pipeline_path }}/{{ file_info.name }}"
+{% endfor %}</div>
+
+            <p><strong>Option 2:</strong> If you need group write access:</p>
+            <div class="command-box"><span class="comment"># Add write permission for group</span>
+{% for file_info in file_issues %}chmod g+w "{{ pipeline_path }}/{{ file_info.name }}"
+{% endfor %}</div>
+            {% endif %}
+
+            <p><strong>Option 3:</strong> Change ownership (requires sudo):</p>
+            <div class="command-box"><span class="comment"># Change owner to your user</span>
+sudo chown $(whoami) "{{ pipeline_path }}"{% if not files_missing %}{% for file_info in file_issues %} "{{ pipeline_path }}/{{ file_info.name }}"{% endfor %}{% endif %}</div>
+        </div>
+
+        <div class="btn-group">
+            <button type="button" class="btn btn-back" onclick="window.location.href='/'">
+                <span>&larr;</span>
+                <span>Select Different Dataset</span>
+            </button>
+        </div>
+
+        <div class="note">
+            <strong>Note:</strong> After fixing permissions, return to the dataset selection page and re-select this dataset to continue.
+        </div>
+    </div>
+</body>
+</html>

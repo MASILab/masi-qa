@@ -80,6 +80,62 @@ def validate_directory(path):
         errors.append("Path is not readable")
     return len(errors) == 0, errors
 
+
+def check_write_permissions(pipeline_path):
+    """
+    Check if QA files can be written/created in the pipeline directory.
+
+    Returns:
+        tuple: (can_write: bool, file_issues: list, files_missing: bool)
+        - can_write: True if all necessary write permissions are available
+        - file_issues: List of dicts with 'name', 'status', 'message' for each issue
+        - files_missing: True if files need to be created (vs modified)
+    """
+    json_path = pipeline_path / 'QA.json'
+    csv_path = pipeline_path / 'QA.csv'
+
+    file_issues = []
+    files_missing = False
+
+    # Check if files exist
+    json_exists = json_path.exists()
+    csv_exists = csv_path.exists()
+
+    if not json_exists or not csv_exists:
+        # Files need to be created - check directory write permission
+        if not os.access(pipeline_path, os.W_OK):
+            files_missing = True
+            if not json_exists:
+                file_issues.append({
+                    'name': 'QA.json',
+                    'status': 'missing',
+                    'message': 'needs to be created (directory not writable)'
+                })
+            if not csv_exists:
+                file_issues.append({
+                    'name': 'QA.csv',
+                    'status': 'missing',
+                    'message': 'needs to be created (directory not writable)'
+                })
+
+    # Check existing files for write permission
+    if json_exists and not os.access(json_path, os.W_OK):
+        file_issues.append({
+            'name': 'QA.json',
+            'status': 'not-writable',
+            'message': 'exists but not writable'
+        })
+
+    if csv_exists and not os.access(csv_path, os.W_OK):
+        file_issues.append({
+            'name': 'QA.csv',
+            'status': 'not-writable',
+            'message': 'exists but not writable'
+        })
+
+    can_write = len(file_issues) == 0
+    return can_write, file_issues, files_missing
+
 def require_qa_directory(f):
     """Decorator to ensure QA directory is set before accessing route."""
     @wraps(f)
@@ -821,6 +877,17 @@ def render_montage(clicked_path, pipeline):
 
     # Get the list of PNG files in the pipeline directory
     pipeline_path = Path(qa_directory + '/' + clicked_path + '/' + pipeline)
+
+    # Check write permissions before proceeding
+    can_write, file_issues, files_missing = check_write_permissions(pipeline_path)
+    if not can_write:
+        return render_template('permission_error.html',
+                               clicked_path=clicked_path,
+                               pipeline=pipeline,
+                               pipeline_path=str(pipeline_path),
+                               file_issues=file_issues,
+                               files_missing=files_missing)
+
     pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
     pngs = sorted(pngs)
 
