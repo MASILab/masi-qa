@@ -43,7 +43,7 @@ Install via: `pip install masi-qa`
 - `mode_mismatch.html`: Error page when selected mode doesn't match existing QA data format
 
 **Data Flow:**
-1. User selects dataset → pipeline directory, configures QA settings
+1. User selects root directory → dataset → pipeline, then enters reviewer name
 2. Backend scans for PNG files, validates BIDS compliance (if enabled), creates/loads `QA.json`
 3. Frontend displays images with QA controls
 4. QA status saved to `QA.json` and exported to `QA.csv`

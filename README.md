@@ -50,7 +50,9 @@ pip install .
 
 3. Select a root directory, dataset, and pipeline
 
-4. Click "Continue to QA" to begin review
+4. Enter your reviewer name in the QA Settings section
+
+5. Click "Continue to QA" to begin review
 
 ## Keyboard Shortcuts
 
