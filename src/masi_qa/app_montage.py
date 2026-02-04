@@ -277,22 +277,44 @@ def get_leaf_dicts(d, path=None, curr_dict=None):
 
     return leaf_dicts
 
-def set_file_permissions(file_path, group_name='p_masi', permissions=0o775):
+def set_file_permissions(file_path, group_name=None, file_permissions=0o664):
     """
-    sets the file permissions to 775 and the group to 'p_masi'
+    Set file permissions to be group-writable so multiple users can access QA files.
+
+    Args:
+        file_path: Path to the file
+        group_name: Optional group name to set (e.g., 'p_masi'). If None or group
+                    doesn't exist, only file permissions are changed.
+        file_permissions: File permission mode (default 0o664 = rw-rw-r--)
+
+    This function is designed to be robust - it will set permissions if possible
+    but won't crash if group operations fail (e.g., group doesn't exist or user
+    lacks permission to change group).
     """
+    try:
+        # Set file permissions to group-writable
+        os.chmod(file_path, file_permissions)
+    except OSError as e:
+        # Permission setting failed, but don't crash - file was still written
+        print(f"Warning: Could not set permissions on {file_path}: {e}")
 
-    #set the permissions to be 775
-    os.chmod(file_path, permissions)
-    #set the group to be 'p_masi'
-    group_name = 'p_masi'
-    gid = grp.getgrnam(group_name).gr_gid
-    os.chown(file_path, -1, gid)
+    # Optionally try to set group ownership
+    if group_name:
+        try:
+            gid = grp.getgrnam(group_name).gr_gid
+            os.chown(file_path, -1, gid)
+        except KeyError:
+            # Group doesn't exist on this system - that's okay
+            pass
+        except OSError as e:
+            # User can't change group ownership - that's okay
+            print(f"Warning: Could not set group on {file_path}: {e}")
 
-def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False, permissions=False):
+def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
     """
     Given a QA JSON dictionary, convert it to a CSV file.
     Handles both flat (non-BIDS) and nested (BIDS) structures.
+    Sets group-writable permissions so multiple users can access the file.
     """
     if bids_mode:
         # BIDS mode: nested structure
@@ -322,8 +344,8 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False, permissions=F
         csv_path = pipeline_path / 'QA.csv'
         df_sorted.to_csv(csv_path, index=False)
 
-        if permissions:
-            set_file_permissions(csv_path)
+        # Set group-writable permissions for multi-user access
+        set_file_permissions(csv_path)
 
         return df_sorted
     else:
@@ -339,6 +361,9 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False, permissions=F
 
         csv_path = pipeline_path / 'QA.csv'
         df.to_csv(csv_path, index=False)
+
+        # Set group-writable permissions for multi-user access
+        set_file_permissions(csv_path)
 
         return df
 
@@ -651,16 +676,16 @@ def convert_flat_to_bids(flat_json, pngs):
     return bids_json
 
 
-def save_json_file(path, dict, permissions=False):
+def save_json_file(path, dict):
     """
-    Given a json dictionary, save it to the json file
+    Given a json dictionary, save it to the json file.
+    Sets group-writable permissions so multiple users can access the file.
     """
     with open(path, 'w') as f:
         json.dump(dict, f, indent=4)
-    
-    #set the permissions to be 775 and group to p_masi
-    if permissions:
-        set_file_permissions(path)
+
+    # Set group-writable permissions for multi-user access
+    set_file_permissions(path)
 
 @app.route('/select-root', methods=['GET'])
 def select_root():
@@ -769,10 +794,10 @@ def convert_qa_format(clicked_path, pipeline):
         return redirect(url_for('render_montage', clicked_path=clicked_path, pipeline=pipeline))
 
     # Save converted JSON
-    save_json_file(json_path, converted_json, permissions=False)
+    save_json_file(json_path, converted_json)
 
     # Regenerate CSV in new format
-    convert_json_to_csv(converted_json, pipeline_path, bids_mode=bids_mode, permissions=False)
+    convert_json_to_csv(converted_json, pipeline_path, bids_mode=bids_mode)
 
     print(f"Converted QA data from {existing_format} to {target_format} format")
     flash(f"Successfully converted QA data to {target_format.upper() if target_format == 'bids' else 'Standard'} format. Backup saved as QA.json.backup", 'success')
@@ -919,8 +944,8 @@ def render_montage(clicked_path, pipeline):
             json_dict = create_bids_json_dict(pngs_files)
         else:
             json_dict = create_json_dict(pngs_files)
-        df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=bids_mode, permissions=False)
-        save_json_file(json_path, json_dict, permissions=False)
+        df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=bids_mode)
+        save_json_file(json_path, json_dict)
     else:
         with open(json_path, 'r') as f:
             json_dict = json.load(f)
