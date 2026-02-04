@@ -868,7 +868,9 @@ def index():
         print("QA Directory:", qa_directory)
     # Set session bids_mode from global at each page load to ensure consistency
     session['bids_mode'] = BIDS_MODE
-    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE)
+    # Get previously entered user name from session (if any)
+    user_name = session.get('user_name', '')
+    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE, user_name=user_name)
 
 @app.route('/datasets', methods=['POST'])
 @require_qa_directory

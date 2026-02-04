@@ -349,7 +349,7 @@
             <!-- User Name Input (Required) -->
             <div class="setting-item">
                 <label for="userName">Reviewer Name:<span class="required-indicator">*</span></label>
-                <input type="text" id="userName" placeholder="Enter your name (required)" oninput="updateSettingsState()">
+                <input type="text" id="userName" placeholder="Enter your name (required)" value="{{ user_name or '' }}" oninput="updateSettingsState()">
             </div>
 
         </div>
