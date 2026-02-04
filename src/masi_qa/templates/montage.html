@@ -927,8 +927,31 @@
             // All images have been reviewed - banner is already visible
         }
 
+        // Flag to prevent double-clicks on "Change Selection" button
+        let isSavingAndGoingBack = false;
+
         // Function to save current QA state and navigate back to selection
         function saveAndGoBack() {
+            // Prevent multiple clicks while save is in progress
+            if (isSavingAndGoingBack) {
+                return;
+            }
+            isSavingAndGoingBack = true;
+
+            // Update button to show saving state
+            const backButton = document.querySelector('.btn-back');
+            if (backButton) {
+                backButton.style.opacity = '0.6';
+                backButton.style.cursor = 'wait';
+                backButton.querySelector('span:last-child').textContent = 'Saving...';
+            }
+
+            // Handle case where there are no images or montage not initialized
+            if (!imagePaths || imagePaths.length === 0) {
+                window.location.href = '/';
+                return;
+            }
+
             // Get current QA status and reason
             const qaButtons = document.querySelectorAll('.qa-button');
             const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
@@ -937,9 +960,21 @@
 
             // Get current image info
             const imagePath = imagePaths[currentImageIndex];
-            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
+            if (!imagePath) {
+                window.location.href = '/';
+                return;
+            }
+
+            const imageName = getRelativeImagePath(imagePath);
             const bidsFields = getBIDSFieldsFromPNG(imageName, false);
             const qaDict = getLeafDict(nestedDict, bidsFields);
+
+            // Handle case where qaDict doesn't exist (corrupted or mismatched data)
+            if (!qaDict) {
+                console.error('Could not find QA dictionary entry for:', imageName);
+                window.location.href = '/';
+                return;
+            }
 
             // Calculate duration spent on this image (in seconds with millisecond precision)
             const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
@@ -975,6 +1010,13 @@
             })
             .catch(error => {
                 console.error('Error saving QA dictionary:', error);
+                // Reset button state
+                isSavingAndGoingBack = false;
+                if (backButton) {
+                    backButton.style.opacity = '1';
+                    backButton.style.cursor = 'pointer';
+                    backButton.querySelector('span:last-child').textContent = 'Change Selection';
+                }
                 // Still navigate even if save fails, but warn user
                 if (confirm('Failed to save QA data. Leave anyway?')) {
                     window.location.href = '/';
