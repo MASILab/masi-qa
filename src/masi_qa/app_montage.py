@@ -277,7 +277,7 @@ def get_leaf_dicts(d, path=None, curr_dict=None):
 
     return leaf_dicts
 
-def set_file_permissions(file_path, group_name=None, file_permissions=0o664):
+def set_file_permissions(file_path, group_name=None, file_permissions=0o770):
     """
     Set file permissions to be group-writable so multiple users can access QA files.
 
@@ -285,7 +285,7 @@ def set_file_permissions(file_path, group_name=None, file_permissions=0o664):
         file_path: Path to the file
         group_name: Optional group name to set (e.g., 'p_masi'). If None or group
                     doesn't exist, only file permissions are changed.
-        file_permissions: File permission mode (default 0o664 = rw-rw-r--)
+        file_permissions: File permission mode (default 0o770 = rwxrwx---)
 
     This function is designed to be robust - it will set permissions if possible
     but won't crash if group operations fail (e.g., group doesn't exist or user

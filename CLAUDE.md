@@ -140,7 +140,7 @@ The dataset selection page includes two settings:
 - Host bound to `0.0.0.0` for Docker compatibility
 - Only supports PNG image format
 - QA status values: "yes", "no", "maybe"
-- Unix group permissions set to `p_masi` with 0o775
+- Unix group permissions set to `p_masi` with 0o770
 - `QA.json` auto-created with default status "yes"; changes saved when navigating to next image
 - `QA.csv` is regenerated from JSON on each save
 
