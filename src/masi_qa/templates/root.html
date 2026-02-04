@@ -342,18 +342,6 @@
             </p>
         </div>
 
-        <!-- QA Settings Section (moved above selection grid) -->
-        <div class="settings-section" id="settingsSection">
-            <div class="settings-header" id="settingsHeader">QA Settings</div>
-
-            <!-- User Name Input (Required) -->
-            <div class="setting-item">
-                <label for="userName">Reviewer Name:<span class="required-indicator">*</span></label>
-                <input type="text" id="userName" placeholder="Enter your name (required)" value="{{ user_name or '' }}" oninput="updateSettingsState()">
-            </div>
-
-        </div>
-
         <div class="selection-grid">
             <!-- Root Directory Browser Column -->
             <div class="selection-column" id="rootColumn">
@@ -393,6 +381,18 @@
         <div class="selected-path" id="selectedPath">
             <div class="selected-path-label">Selected Path:</div>
             <div class="selected-path-text" id="selectedPathText"></div>
+        </div>
+
+        <!-- QA Settings Section -->
+        <div class="settings-section" id="settingsSection">
+            <div class="settings-header" id="settingsHeader">QA Settings</div>
+
+            <!-- User Name Input (Required) -->
+            <div class="setting-item">
+                <label for="userName">Reviewer Name:<span class="required-indicator">*</span></label>
+                <input type="text" id="userName" placeholder="Enter your name (required)" value="{{ user_name or '' }}" oninput="updateSettingsState()">
+            </div>
+
         </div>
 
         <!-- Continue Button -->
