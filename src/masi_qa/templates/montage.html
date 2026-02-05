@@ -273,7 +273,7 @@
         const nestedDict = JSON.parse('{{ json_dict | tojson | safe }}');
         const imageElements = []; // Array to store image elements
         let imageViewStartTime = null; // Track when current image was first displayed
-        let unreviewedCount = 0; // Track count of unreviewed images for O(1) banner check
+        let unreviewedIndices = []; // Sorted array of unreviewed image indices for O(1) navigation
 
         // Function to construct the image URL
         function constructImageUrl(clickedPath, pipeline, imageName) {
@@ -303,8 +303,8 @@
                 if (loadedCount === totalImages) {
                     hideLoadingBar();
                     initializeMontage();
-                    // Initialize unreviewed count and update banner
-                    initializeUnreviewedCount();
+                    // Initialize unreviewed indices array and update banner
+                    initializeUnreviewedIndices();
                     updateAllReviewedBanner();
                 }
             }
@@ -624,9 +624,12 @@
             // Always update date, user, and duration when navigating away (viewing = reviewing)
             qaDict['date'] = getDateTime();
 
-            // Decrement unreviewed count if this was a previously unreviewed image
-            if (wasUnreviewed && unreviewedCount > 0) {
-                unreviewedCount--;
+            // Remove from unreviewed list if this was a previously unreviewed image
+            if (wasUnreviewed) {
+                const idx = unreviewedIndices.indexOf(currentImageIndex);
+                if (idx !== -1) {
+                    unreviewedIndices.splice(idx, 1);
+                }
             }
 
             if (userName) {
@@ -834,6 +837,7 @@
             const progressText = document.getElementById('reviewProgressText');
 
             const total = imagePaths.length;
+            const unreviewedCount = unreviewedIndices.length;
             const reviewed = total - unreviewedCount;
             const percentage = total > 0 ? (reviewed / total) * 100 : 0;
 
@@ -850,18 +854,20 @@
             }
         }
 
-        // Function to initialize the unreviewed count (called once on page load)
-        function initializeUnreviewedCount() {
-            unreviewedCount = 0;
+        // Function to initialize the unreviewed indices array (called once on page load)
+        // Builds a sorted array of indices for O(1) "next unreviewed" navigation
+        function initializeUnreviewedIndices() {
+            unreviewedIndices = [];
             for (let i = 0; i < imagePaths.length; i++) {
                 const imagePath = imagePaths[i];
                 const imageName = getRelativeImagePath(imagePath);
                 const bidsFields = getBIDSFieldsFromPNG(imageName, false);
                 const qaDict = getLeafDict(nestedDict, bidsFields);
                 if (!qaDict['date'] || qaDict['date'] === '') {
-                    unreviewedCount++;
+                    unreviewedIndices.push(i);
                 }
             }
+            // Array is already sorted since we iterate in order
         }
 
         // Function to save current image state (extracted for reuse)
@@ -885,9 +891,12 @@
             // Update the dictionary
             qaDict['date'] = getDateTime();
 
-            // Decrement unreviewed count if this was a previously unreviewed image
-            if (wasUnreviewed && unreviewedCount > 0) {
-                unreviewedCount--;
+            // Remove from unreviewed list if this was a previously unreviewed image
+            if (wasUnreviewed) {
+                const idx = unreviewedIndices.indexOf(currentImageIndex);
+                if (idx !== -1) {
+                    unreviewedIndices.splice(idx, 1);
+                }
             }
 
             if (userName) {
@@ -939,25 +948,87 @@
             input.blur();
         }
 
-        // Function to jump to the next unreviewed image
-        async function jumpToNextUnreviewed() {
-            const total = imagePaths.length;
-            for (let i = 1; i <= total; i++) {
-                const checkIndex = (currentImageIndex + i) % total;
-                const imagePath = imagePaths[checkIndex];
-                const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
-                const bidsFields = getBIDSFieldsFromPNG(imageName, false);
-                const qaDict = getLeafDict(nestedDict, bidsFields);
+        // Function to find the next unreviewed index using binary search
+        // Returns the smallest index in unreviewedIndices that is > currentIndex,
+        // or wraps around to the first element if none found
+        function findNextUnreviewedIndex(currentIndex) {
+            if (unreviewedIndices.length === 0) return -1;
 
-                // Check if unreviewed (empty or missing date field)
-                if (!qaDict['date'] || qaDict['date'] === '') {
-                    await saveCurrentImageState();
-                    currentImageIndex = checkIndex;
-                    initializeMontage();
-                    return;
+            // Binary search for first index > currentIndex
+            let left = 0, right = unreviewedIndices.length;
+            while (left < right) {
+                const mid = (left + right) >> 1;
+                if (unreviewedIndices[mid] <= currentIndex) {
+                    left = mid + 1;
+                } else {
+                    right = mid;
                 }
             }
-            // All images have been reviewed - banner is already visible
+
+            // If found an index after current, use it; otherwise wrap to first
+            if (left < unreviewedIndices.length) {
+                return unreviewedIndices[left];
+            } else {
+                return unreviewedIndices[0]; // Wrap around
+            }
+        }
+
+        // Function to jump to the next unreviewed image (O(log n) with fire-and-forget save)
+        function jumpToNextUnreviewed() {
+            if (unreviewedIndices.length === 0) {
+                // All images reviewed - banner already visible
+                return;
+            }
+
+            const nextIndex = findNextUnreviewedIndex(currentImageIndex);
+            if (nextIndex === -1 || nextIndex === currentImageIndex) {
+                return; // No unreviewed images or already on one
+            }
+
+            // Save current image state (fire-and-forget, server has locking)
+            const qaButtons = document.querySelectorAll('.qa-button');
+            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
+            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
+            const reasonInputValue = document.querySelector('.reason-input')?.value || '';
+
+            const imagePath = imagePaths[currentImageIndex];
+            const imageName = getRelativeImagePath(imagePath);
+            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
+            const qaDict = getLeafDict(nestedDict, bidsFields);
+
+            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
+            const wasUnreviewed = !qaDict['date'] || qaDict['date'] === '';
+
+            qaDict['date'] = getDateTime();
+            if (wasUnreviewed) {
+                const idx = unreviewedIndices.indexOf(currentImageIndex);
+                if (idx !== -1) {
+                    unreviewedIndices.splice(idx, 1);
+                }
+            }
+            if (userName) {
+                qaDict['user'] = userName;
+            }
+            if (!bidsMode) {
+                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
+            }
+            qaDict['QA_status'] = qaStatus;
+            qaDict['reason'] = reasonInputValue;
+
+            // Fire-and-forget save (server-side locking prevents race conditions)
+            saveImageIncremental(imageName, qaDict)
+                .then(success => {
+                    if (success) {
+                        console.log('Incremental save successful');
+                    } else {
+                        console.warn('Incremental save failed');
+                    }
+                    updateAllReviewedBanner();
+                });
+
+            // Navigate to next unreviewed
+            currentImageIndex = nextIndex;
+            initializeMontage();
         }
 
         // Flag to prevent double-clicks on "Change Selection" button
