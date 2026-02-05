@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging, socket, shutil, tempfile
+import os, json, io, argparse, re, grp, logging, socket, shutil, tempfile, fcntl
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -371,6 +371,7 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
 def update_csv_entry(csv_path, key_data, entry_data, bids_mode=False):
     """
     Update a single row in QA.csv without regenerating the entire file.
+    Uses file locking to prevent race conditions from concurrent updates.
 
     Args:
         csv_path: Path to QA.csv
@@ -381,32 +382,40 @@ def update_csv_entry(csv_path, key_data, entry_data, bids_mode=False):
         bids_mode: Whether using BIDS format
     """
     csv_path = Path(csv_path)
-    df = pd.read_csv(csv_path)
+    lock_path = csv_path.parent / '.QA.csv.lock'
 
-    if bids_mode:
-        # Build mask for BIDS key fields
-        mask = (df['sub'] == key_data.get('sub', ''))
-        if 'ses' in df.columns:
-            mask &= (df['ses'].fillna('') == key_data.get('ses', ''))
-        if 'acq' in df.columns:
-            mask &= (df['acq'].fillna('') == key_data.get('acq', ''))
-        if 'run' in df.columns:
-            mask &= (df['run'].fillna('') == key_data.get('run', ''))
-    else:
-        # Non-BIDS: match by filename
-        mask = df['filename'] == key_data['filename']
+    # Use file locking to serialize concurrent updates
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+        try:
+            df = pd.read_csv(csv_path)
 
-    # Update matching row(s)
-    if mask.any():
-        for field, value in entry_data.items():
-            if field in df.columns:
-                df.loc[mask, field] = value
+            if bids_mode:
+                # Build mask for BIDS key fields
+                mask = (df['sub'] == key_data.get('sub', ''))
+                if 'ses' in df.columns:
+                    mask &= (df['ses'].fillna('') == key_data.get('ses', ''))
+                if 'acq' in df.columns:
+                    mask &= (df['acq'].fillna('') == key_data.get('acq', ''))
+                if 'run' in df.columns:
+                    mask &= (df['run'].fillna('') == key_data.get('run', ''))
+            else:
+                # Non-BIDS: match by filename
+                mask = df['filename'] == key_data['filename']
 
-    # Atomic write
-    def write_csv(f):
-        df.to_csv(f, index=False)
+            # Update matching row(s)
+            if mask.any():
+                for field, value in entry_data.items():
+                    if field in df.columns:
+                        df.loc[mask, field] = value
 
-    atomic_write_file(csv_path, write_csv)
+            # Atomic write
+            def write_csv(f):
+                df.to_csv(f, index=False)
+
+            atomic_write_file(csv_path, write_csv)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
 
 
 def read_csv_to_json(df):
@@ -752,6 +761,7 @@ def atomic_write_file(path, write_func):
 def update_json_entry(json_path, key_path, entry_data):
     """
     Update a single entry in QA.json without rewriting the entire file.
+    Uses file locking to prevent race conditions from concurrent updates.
 
     Args:
         json_path: Path to QA.json
@@ -763,22 +773,32 @@ def update_json_entry(json_path, key_path, entry_data):
     Returns:
         Updated json_dict
     """
-    with open(json_path, 'r') as f:
-        json_dict = json.load(f)
+    json_path = Path(json_path)
+    lock_path = json_path.parent / '.QA.json.lock'
 
-    # Navigate to the entry
-    current = json_dict
-    for key in key_path[:-1]:
-        if key and key in current:
-            current = current[key]
+    # Use file locking to serialize concurrent updates
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+        try:
+            with open(json_path, 'r') as f:
+                json_dict = json.load(f)
 
-    # Update the leaf entry
-    final_key = key_path[-1] if key_path else None
-    if final_key and final_key in current:
-        current[final_key].update(entry_data)
+            # Navigate to the entry
+            current = json_dict
+            for key in key_path[:-1]:
+                if key and key in current:
+                    current = current[key]
 
-    # Atomic write
-    atomic_write_file(json_path, lambda f: json.dump(json_dict, f, indent=4))
+            # Update the leaf entry
+            final_key = key_path[-1] if key_path else None
+            if final_key and final_key in current:
+                current[final_key].update(entry_data)
+
+            # Atomic write
+            atomic_write_file(json_path, lambda f: json.dump(json_dict, f, indent=4))
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
+
     return json_dict
 
 
@@ -865,7 +885,7 @@ def convert_qa_format(clicked_path, pipeline):
 
     # Get list of PNG files
     pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
-    pngs = sorted(pngs)
+    pngs = sorted(pngs, key=str.lower)  # Case-insensitive sort for consistent ordering
     prefix = clicked_path + '/' + pipeline + '/'
     pngs_files = [x[len(prefix):] for x in pngs]
 
@@ -1011,10 +1031,8 @@ def render_montage(clicked_path, pipeline):
                                files_missing=files_missing)
 
     pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
-    pngs = sorted(pngs)
+    pngs = sorted(pngs, key=str.lower)  # Case-insensitive sort for consistent ordering
 
-    # Pass image paths to montage.html so they can be loaded
-    image_paths = [str(png) for png in pngs]
     # Extract paths relative to pipeline folder (e.g., "subdir/image.png" for recursive images)
     prefix = clicked_path + '/' + pipeline + '/'
     pngs_files = [x[len(prefix):] for x in pngs]
@@ -1086,6 +1104,16 @@ def render_montage(clicked_path, pipeline):
             json_dict = check_json_for_png_bids(json_dict, pngs_files)
         else:
             json_dict = check_json_for_png(json_dict, pngs_files)
+
+        # Use QA.json key order for consistent ordering across sessions
+        # For BIDS mode, the sorted glob order is already correct (BIDS naming sorts by subject/session)
+        # For non-BIDS mode, use JSON key order to preserve original ordering
+        if not bids_mode:
+            pngs_files = list(json_dict.keys())
+
+    # Construct image_paths from the final pngs_files order
+    prefix = clicked_path + '/' + pipeline + '/'
+    image_paths = [prefix + f for f in pngs_files]
 
     return render_template('montage.html',
                            clicked_path=clicked_path,
@@ -1184,6 +1212,7 @@ def update_qa_dict():
 def update_single_qa():
     """
     Update a single QA entry incrementally.
+    Uses a unified lock for both JSON and CSV to ensure atomicity.
 
     Expected JSON payload:
     {
@@ -1212,25 +1241,67 @@ def update_single_qa():
     if not key_path:
         return jsonify({'status': 'error', 'message': 'key_path is required'}), 400
 
+    # Use a unified lock for both JSON and CSV updates
+    lock_path = json_path.parent / '.QA.lock'
+
     try:
-        # Update JSON incrementally
-        update_json_entry(json_path, key_path, entry_data)
+        with open(lock_path, 'w') as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+            try:
+                # Update JSON
+                with open(json_path, 'r') as f:
+                    json_dict = json.load(f)
 
-        # Build key_data for CSV update
-        if bids_mode:
-            key_data = {'sub': key_path[0] if key_path else '', 'ses': '', 'acq': '', 'run': ''}
-            for k in key_path[1:]:
-                if k and k.startswith('ses-'):
-                    key_data['ses'] = k
-                elif k and k.startswith('acq-'):
-                    key_data['acq'] = k
-                elif k and k.startswith('run-'):
-                    key_data['run'] = k
-        else:
-            key_data = {'filename': key_path[0]}
+                # Navigate to the entry
+                current = json_dict
+                for key in key_path[:-1]:
+                    if key and key in current:
+                        current = current[key]
 
-        # Update CSV incrementally
-        update_csv_entry(csv_path, key_data, entry_data, bids_mode)
+                # Update the leaf entry
+                final_key = key_path[-1] if key_path else None
+                if final_key and final_key in current:
+                    current[final_key].update(entry_data)
+
+                # Atomic write JSON
+                atomic_write_file(json_path, lambda f: json.dump(json_dict, f, indent=4))
+
+                # Update CSV
+                df = pd.read_csv(csv_path)
+
+                if bids_mode:
+                    # Build mask for BIDS key fields
+                    key_data = {'sub': key_path[0] if key_path else '', 'ses': '', 'acq': '', 'run': ''}
+                    for k in key_path[1:]:
+                        if k and k.startswith('ses-'):
+                            key_data['ses'] = k
+                        elif k and k.startswith('acq-'):
+                            key_data['acq'] = k
+                        elif k and k.startswith('run-'):
+                            key_data['run'] = k
+
+                    mask = (df['sub'] == key_data.get('sub', ''))
+                    if 'ses' in df.columns:
+                        mask &= (df['ses'].fillna('') == key_data.get('ses', ''))
+                    if 'acq' in df.columns:
+                        mask &= (df['acq'].fillna('') == key_data.get('acq', ''))
+                    if 'run' in df.columns:
+                        mask &= (df['run'].fillna('') == key_data.get('run', ''))
+                else:
+                    # Non-BIDS: match by filename
+                    mask = df['filename'] == key_path[0]
+
+                # Update matching row(s)
+                if mask.any():
+                    for field, value in entry_data.items():
+                        if field in df.columns:
+                            df.loc[mask, field] = value
+
+                # Atomic write CSV
+                atomic_write_file(csv_path, lambda f: df.to_csv(f, index=False))
+
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
 
         return jsonify({'status': 'success'})
 
