@@ -214,6 +214,15 @@
         .btn-nav:hover {
             background-color: #0d47a1;
         }
+        #speed-slider {
+            width: 120px;
+            cursor: pointer;
+        }
+        #speed-value {
+            min-width: 50px;
+            font-size: 13px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -253,6 +262,9 @@
                onfocus="isInputFocused=true" onblur="isInputFocused=false"
                onkeydown="if(event.key==='Enter'){jumpToImageFromInput(); event.preventDefault();}">
         <button class="btn-nav" onclick="jumpToNextUnreviewed()">Next Unreviewed (N)</button>
+        <label for="speed-slider" style="margin-left: 20px;">Speed:</label>
+        <input type="range" id="speed-slider" min="50" max="500" value="250" step="10">
+        <span id="speed-value">250ms</span>
     </div>
     <div class="loading-bar-container">
         <div id="loadingBar" class="loading-bar-progress"></div>
@@ -271,6 +283,7 @@
         let currentImageIndex = 0; // Track current image index
         let isLooping = false; // Flag to track if looping is active
         let updateInterval = null; // Interval reference for automatic update
+        let autoplayDelay = 250; // Autoplay delay in milliseconds (adjustable via slider)
         let reasonInput; // Declare globally to access in multiple functions
         let isInputFocused = false; // Flag to track if an input field is focused
         // save the json dict to a variable
@@ -657,7 +670,7 @@
             function loop() {
                 if (isLooping) {
                     navigateImage(1); // Move to next image
-                    setTimeout(() => requestAnimationFrame(loop), 250); // Adjust timeout for desired speed
+                    setTimeout(() => requestAnimationFrame(loop), autoplayDelay); // Adjust timeout for desired speed
                 }
             }
             requestAnimationFrame(loop);
@@ -1004,6 +1017,12 @@
             // as a wrapper for the handleKeyboardEvent function, allowing us to pass additional values like
             // bidsFields and qaDict (so they don't have to be retreived again in navigateImage)
         document.addEventListener('keydown', handleKeyboardEvent);
+
+        // Speed slider event listener
+        document.getElementById('speed-slider').addEventListener('input', function(e) {
+            autoplayDelay = parseInt(e.target.value);
+            document.getElementById('speed-value').textContent = autoplayDelay + 'ms';
+        });
 
         // Initialize montage on page load
         preloadImagesAndInitialize();
