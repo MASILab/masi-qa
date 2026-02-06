@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging, socket, shutil, fcntl
+import os, json, io, argparse, re, grp, logging, socket, shutil, fcntl, stat
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -101,22 +101,14 @@ def check_write_permissions(pipeline_path):
     json_exists = json_path.exists()
     csv_exists = csv_path.exists()
 
-    if not json_exists or not csv_exists:
-        # Files need to be created - check directory write permission
-        if not os.access(pipeline_path, os.W_OK):
-            files_missing = True
-            if not json_exists:
-                file_issues.append({
-                    'name': 'QA.json',
-                    'status': 'missing',
-                    'message': 'needs to be created (directory not writable)'
-                })
-            if not csv_exists:
-                file_issues.append({
-                    'name': 'QA.csv',
-                    'status': 'missing',
-                    'message': 'needs to be created (directory not writable)'
-                })
+    # Always check directory write permission (needed for .QA.lock file during writes)
+    if not os.access(pipeline_path, os.W_OK):
+        file_issues.append({
+            'name': 'Directory',
+            'status': 'not-writable',
+            'message': 'cannot create lock file for safe writes'
+        })
+        files_missing = not json_exists or not csv_exists
 
     # Check existing files for write permission
     if json_exists and not os.access(json_path, os.W_OK):
@@ -132,6 +124,37 @@ def check_write_permissions(pipeline_path):
             'status': 'not-writable',
             'message': 'exists but not writable'
         })
+
+    # Check existing files have correct permissions (0o770) for multi-user access
+    # If permissions are wrong and we're the owner, fix them silently
+    # If permissions are wrong and we're not the owner, add to file_issues
+    expected_mode = 0o770
+    current_uid = os.getuid()
+
+    for file_path, file_name, exists in [
+        (json_path, 'QA.json', json_exists),
+        (csv_path, 'QA.csv', csv_exists)
+    ]:
+        if exists and os.access(file_path, os.W_OK):
+            try:
+                stat_info = os.stat(file_path)
+                current_mode = stat.S_IMODE(stat_info.st_mode)
+                if current_mode != expected_mode:
+                    if stat_info.st_uid == current_uid:
+                        # We're the owner, fix permissions silently
+                        try:
+                            os.chmod(file_path, expected_mode)
+                        except OSError:
+                            pass  # Best effort, continue anyway
+                    else:
+                        # Not the owner, can't fix - report issue
+                        file_issues.append({
+                            'name': file_name,
+                            'status': 'wrong-permissions',
+                            'message': f'has mode {oct(current_mode)}, needs {oct(expected_mode)} (ask owner to fix)'
+                        })
+            except OSError:
+                pass  # Can't stat file, skip permission check
 
     can_write = len(file_issues) == 0
     return can_write, file_issues, files_missing
@@ -315,7 +338,6 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
     Given a QA JSON dictionary, convert it to a CSV file.
     Handles both flat (non-BIDS) and nested (BIDS) structures.
     Uses file locking to prevent corruption from concurrent writes.
-    Sets group-writable permissions so multiple users can access the file.
     """
     lock_path = Path(pipeline_path) / '.QA.lock'
 
@@ -349,7 +371,6 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
             try:
                 csv_path = pipeline_path / 'QA.csv'
                 df_sorted.to_csv(csv_path, index=False)
-                set_file_permissions(csv_path)
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
@@ -370,7 +391,6 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
             try:
                 csv_path = pipeline_path / 'QA.csv'
                 df.to_csv(csv_path, index=False)
-                set_file_permissions(csv_path)
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
@@ -689,7 +709,6 @@ def save_json_file(path, dict):
     """
     Given a json dictionary, save it to the json file.
     Uses file locking to prevent corruption from concurrent writes.
-    Sets group-writable permissions so multiple users can access the file.
     """
     path = Path(path)
     lock_path = path.parent / '.QA.lock'
@@ -698,7 +717,6 @@ def save_json_file(path, dict):
         try:
             with open(path, 'w') as f:
                 json.dump(dict, f, indent=4)
-            set_file_permissions(path)
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
@@ -963,6 +981,9 @@ def render_montage(clicked_path, pipeline):
             json_dict = create_json_dict(pngs_files)
         df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=bids_mode)
         save_json_file(json_path, json_dict)
+        # Set permissions on newly created files
+        set_file_permissions(json_path)
+        set_file_permissions(pipeline_path / 'QA.csv')
     else:
         with open(json_path, 'r') as f:
             json_dict = json.load(f)
@@ -1078,6 +1099,9 @@ def render_montage_standard():
         json_dict = create_json_dict(pngs_files)
         df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=False)
         save_json_file(json_path, json_dict)
+        # Set permissions on newly created files
+        set_file_permissions(json_path)
+        set_file_permissions(pipeline_path / 'QA.csv')
     else:
         with open(json_path, 'r') as f:
             json_dict = json.load(f)
