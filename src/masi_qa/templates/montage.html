@@ -278,6 +278,8 @@
         const imageElements = []; // Array to store image elements
         let imageViewStartTime = null; // Track when current image was first displayed
         let unreviewedIndices = []; // Sorted array of unreviewed image indices for O(1) navigation
+        let needsDiskWrite = false;        // True when status/reason changes (conditions A/B)
+        let allReviewedWriteDone = false;  // True after condition D write has fired (prevent re-posting)
 
         // Function to construct the image URL
         function constructImageUrl(clickedPath, pipeline, imageName) {
@@ -451,10 +453,13 @@
                 reasonInput.classList.add('focused'); // Optional: add a class to highlight the input
                 //console.log('Input focused');
             });
-            reasonInput.addEventListener('blur', () => { 
-                isInputFocused = false; 
+            reasonInput.addEventListener('blur', () => {
+                isInputFocused = false;
                 reasonInput.classList.remove('focused'); // Remove highlight
                 //console.log('Input unfocused');
+            });
+            reasonInput.addEventListener('input', () => {
+                needsDiskWrite = true;  // Condition B: reason changed
             });
             imageContainer.appendChild(reasonInput);
 
@@ -519,6 +524,7 @@
                 });
                 // Highlight button (i.e. set the active status for this button)
                 button.classList.add('active');
+                needsDiskWrite = true;  // Condition A: status changed
             });
             return button;
         }
@@ -610,82 +616,36 @@
 
         // Function to navigate images
         function navigateImage(direction) {
+            // Capture current state into nestedDict; check if status/reason changed
+            const hadMeaningfulChange = captureCurrentImageState();
 
-            // check the status of the current QA button and reason compared to the QA dictionary
-                //if they are different, update the dictionary accordingly and push the changes to the server
-            const qaButtons = document.querySelectorAll('.qa-button');
-            console.log(qaButtons); //check to see if the buttons are being selected
-            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
-            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
-            const reasonInput = document.querySelector('.reason-input').value;
-            //console.log('Current QA Status:', qaStatus);
-            //console.log('Current Reason:', reasonInput);
+            // Determine if we need a disk write
+            const allReviewed = (unreviewedIndices.length === 0);
+            let writeToDisk = false;
 
-            // get the current values in the json dictionary
-            const imagePath = imagePaths[currentImageIndex];
-            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
-            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
-            const qaDict = getLeafDict(nestedDict, bidsFields);
-
-            // Calculate duration spent on this image (in seconds with millisecond precision)
-            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
-
-            // Track if this image was unreviewed before we update it
-            const wasUnreviewed = !qaDict['date'] || qaDict['date'] === '';
-
-            // Always update date, user, and duration when navigating away (viewing = reviewing)
-            qaDict['date'] = getDateTime();
-
-            // Remove from unreviewed list if this was a previously unreviewed image
-            if (wasUnreviewed) {
-                const idx = unreviewedIndices.indexOf(currentImageIndex);
-                if (idx !== -1) {
-                    unreviewedIndices.splice(idx, 1);
-                }
+            if (needsDiskWrite || hadMeaningfulChange) {
+                // Condition A or B: status or reason changed
+                writeToDisk = true;
+                needsDiskWrite = false;
+            } else if (allReviewed && !allReviewedWriteDone) {
+                // Condition D: all images just became reviewed, write once
+                writeToDisk = true;
+                allReviewedWriteDone = true;
             }
 
-            if (userName) {
-                qaDict['user'] = userName;  // Track reviewer name
-            }
-            if (!bidsMode) {
-                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
-            }
-
-            // Also update status and reason if changed
-            if (qaStatus !== qaDict['QA_status'] || reasonInput !== qaDict['reason']) {
-                console.log('QA Status or Reason has changed. Updating dictionary...');
-                qaDict['QA_status'] = qaStatus;
-                qaDict['reason'] = reasonInput;
-            }
-
-            // Push the updated dictionary to the server
-            fetch('/update_qa_dict', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(nestedDict)
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                console.log('Updated QA Dictionary:', data);
-                // Update banner visibility
+            if (writeToDisk) {
+                // Fire-and-forget save to server
+                sendToServer(true)
+                    .then(() => updateAllReviewedBanner())
+                    .catch(error => console.error('Error updating QA dictionary:', error));
+            } else {
                 updateAllReviewedBanner();
-            })
-            .catch(error => {
-                console.error('Error updating QA dictionary:', error);
-            });
+            }
 
             currentImageIndex = (currentImageIndex + direction + imagePaths.length) % imagePaths.length;
 
             // when navigating to the last image, stop the loop
             if (currentImageIndex === imagePaths.length - 1) {
-                //clearInterval(updateInterval); #commented out for testing faster fn
                 isLooping = false;
             }
 
@@ -799,6 +759,63 @@
             // console.log('Username:', '{{ user }}');
         }
 
+        // Capture the current image's UI state into nestedDict.
+        // Updates date, user, duration, unreviewedIndices, status, and reason.
+        // Returns true if QA_status or reason changed vs previous values.
+        function captureCurrentImageState() {
+            const qaButtons = document.querySelectorAll('.qa-button');
+            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
+            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
+            const reasonInputValue = document.querySelector('.reason-input')?.value || '';
+
+            const imagePath = imagePaths[currentImageIndex];
+            if (!imagePath) return false;
+            const imageName = getRelativeImagePath(imagePath);
+            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
+            const qaDict = getLeafDict(nestedDict, bidsFields);
+            if (!qaDict) return false;
+
+            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
+            const wasUnreviewed = !qaDict['date'] || qaDict['date'] === '';
+
+            // Always update metadata
+            qaDict['date'] = getDateTime();
+            if (wasUnreviewed) {
+                const idx = unreviewedIndices.indexOf(currentImageIndex);
+                if (idx !== -1) {
+                    unreviewedIndices.splice(idx, 1);
+                }
+            }
+            if (userName) {
+                qaDict['user'] = userName;
+            }
+            if (!bidsMode) {
+                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
+            }
+
+            // Check if status or reason changed
+            const statusChanged = (qaStatus !== qaDict['QA_status']);
+            const reasonChanged = (reasonInputValue !== qaDict['reason']);
+
+            // Apply status and reason
+            qaDict['QA_status'] = qaStatus;
+            qaDict['reason'] = reasonInputValue;
+
+            return statusChanged || reasonChanged;
+        }
+
+        // Send nestedDict to the server. writeToDisk controls whether the server persists to disk.
+        function sendToServer(writeToDisk) {
+            return fetch('/update_qa_dict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nestedDict: nestedDict, writeToDisk: writeToDisk })
+            }).then(response => {
+                if (!response.ok) throw new Error('Network response was not ok');
+                return response.json();
+            });
+        }
+
         // Function to update review status (progress bar or completion banner)
         function updateAllReviewedBanner() {
             const banner = document.getElementById('allReviewedBanner');
@@ -842,55 +859,10 @@
 
         // Function to save current image state (extracted for reuse)
         async function saveCurrentImageState() {
-            const qaButtons = document.querySelectorAll('.qa-button');
-            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
-            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
-            const reasonInputValue = document.querySelector('.reason-input')?.value || '';
-
-            const imagePath = imagePaths[currentImageIndex];
-            const imageName = getRelativeImagePath(imagePath); // Get path relative to pipeline folder
-            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
-            const qaDict = getLeafDict(nestedDict, bidsFields);
-
-            // Calculate duration spent on this image (in seconds with millisecond precision)
-            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
-
-            // Track if this image was unreviewed before we update it
-            const wasUnreviewed = !qaDict['date'] || qaDict['date'] === '';
-
-            // Update the dictionary
-            qaDict['date'] = getDateTime();
-
-            // Remove from unreviewed list if this was a previously unreviewed image
-            if (wasUnreviewed) {
-                const idx = unreviewedIndices.indexOf(currentImageIndex);
-                if (idx !== -1) {
-                    unreviewedIndices.splice(idx, 1);
-                }
-            }
-
-            if (userName) {
-                qaDict['user'] = userName;  // Track reviewer name
-            }
-            if (!bidsMode) {
-                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
-            }
-            qaDict['QA_status'] = qaStatus;
-            qaDict['reason'] = reasonInputValue;
-
-            // Push to server
+            captureCurrentImageState();
             try {
-                const response = await fetch('/update_qa_dict', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(nestedDict)
-                });
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                const data = await response.json();
-                console.log('Saved QA state:', data);
-                // Update banner visibility after save
+                await sendToServer(true);
+                needsDiskWrite = false;
                 updateAllReviewedBanner();
             } catch (error) {
                 console.error('Error saving QA state:', error);
@@ -952,65 +924,36 @@
             }
         }
 
-        // Function to jump to the next unreviewed image (O(log n) with fire-and-forget save)
+        // Function to jump to the next unreviewed image (O(log n) with lazy write)
         function jumpToNextUnreviewed() {
             if (unreviewedIndices.length === 0) {
-                // All images reviewed - banner already visible
                 return;
             }
 
             const nextIndex = findNextUnreviewedIndex(currentImageIndex);
             if (nextIndex === -1 || nextIndex === currentImageIndex) {
-                return; // No unreviewed images or already on one
+                return;
             }
 
-            // Save current image state (fire-and-forget, server has locking)
-            const qaButtons = document.querySelectorAll('.qa-button');
-            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
-            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
-            const reasonInputValue = document.querySelector('.reason-input')?.value || '';
+            const hadMeaningfulChange = captureCurrentImageState();
 
-            const imagePath = imagePaths[currentImageIndex];
-            const imageName = getRelativeImagePath(imagePath);
-            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
-            const qaDict = getLeafDict(nestedDict, bidsFields);
+            let writeToDisk = needsDiskWrite || hadMeaningfulChange;
 
-            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
-            const wasUnreviewed = !qaDict['date'] || qaDict['date'] === '';
-
-            qaDict['date'] = getDateTime();
-            if (wasUnreviewed) {
-                const idx = unreviewedIndices.indexOf(currentImageIndex);
-                if (idx !== -1) {
-                    unreviewedIndices.splice(idx, 1);
-                }
+            // Check condition D after capturing state (which may have removed last unreviewed)
+            if (!writeToDisk && unreviewedIndices.length === 0 && !allReviewedWriteDone) {
+                writeToDisk = true;
+                allReviewedWriteDone = true;
             }
-            if (userName) {
-                qaDict['user'] = userName;
-            }
-            if (!bidsMode) {
-                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
-            }
-            qaDict['QA_status'] = qaStatus;
-            qaDict['reason'] = reasonInputValue;
 
-            // Fire-and-forget save to server
-            fetch('/update_qa_dict', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(nestedDict)
-            })
-            .then(response => {
-                if (!response.ok) {
-                    console.warn('Save failed on jump to next unreviewed');
-                }
+            if (writeToDisk) {
+                needsDiskWrite = false;
+                sendToServer(true)
+                    .then(() => updateAllReviewedBanner())
+                    .catch(error => console.error('Error saving QA state:', error));
+            } else {
                 updateAllReviewedBanner();
-            })
-            .catch(error => {
-                console.error('Error saving QA state:', error);
-            });
+            }
 
-            // Navigate to next unreviewed
             currentImageIndex = nextIndex;
             initializeMontage();
         }
@@ -1020,13 +963,9 @@
 
         // Function to save current QA state and navigate back to selection
         function saveAndGoBack() {
-            // Prevent multiple clicks while save is in progress
-            if (isSavingAndGoingBack) {
-                return;
-            }
+            if (isSavingAndGoingBack) return;
             isSavingAndGoingBack = true;
 
-            // Update button to show saving state
             const backButton = document.querySelector('.btn-back');
             if (backButton) {
                 backButton.style.opacity = '0.6';
@@ -1034,82 +973,30 @@
                 backButton.querySelector('span:last-child').textContent = 'Saving...';
             }
 
-            // Handle case where there are no images or montage not initialized
             if (!imagePaths || imagePaths.length === 0) {
                 window.location.href = '/';
                 return;
             }
 
-            // Get current QA status and reason
-            const qaButtons = document.querySelectorAll('.qa-button');
-            const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
-            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
-            const reasonInputValue = document.querySelector('.reason-input')?.value || '';
+            captureCurrentImageState();
 
-            // Get current image info
-            const imagePath = imagePaths[currentImageIndex];
-            if (!imagePath) {
-                window.location.href = '/';
-                return;
-            }
-
-            const imageName = getRelativeImagePath(imagePath);
-            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
-            const qaDict = getLeafDict(nestedDict, bidsFields);
-
-            // Handle case where qaDict doesn't exist (corrupted or mismatched data)
-            if (!qaDict) {
-                console.error('Could not find QA dictionary entry for:', imageName);
-                window.location.href = '/';
-                return;
-            }
-
-            // Calculate duration spent on this image (in seconds with millisecond precision)
-            const viewDuration = imageViewStartTime ? (Date.now() - imageViewStartTime) / 1000 : 0;
-
-            // Update the dictionary
-            qaDict['date'] = getDateTime();
-            if (userName) {
-                qaDict['user'] = userName;  // Track reviewer name
-            }
-            if (!bidsMode) {
-                qaDict['duration'] = Math.round(((qaDict['duration'] || 0) + viewDuration) * 1000) / 1000;
-            }
-            qaDict['QA_status'] = qaStatus;
-            qaDict['reason'] = reasonInputValue;
-
-            // Save to server and then redirect
-            fetch('/update_qa_dict', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(nestedDict)
-            })
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                console.log('Saved QA Dictionary before leaving:', data);
-                window.location.href = '/';
-            })
-            .catch(error => {
-                console.error('Error saving QA dictionary:', error);
-                // Reset button state
-                isSavingAndGoingBack = false;
-                if (backButton) {
-                    backButton.style.opacity = '1';
-                    backButton.style.cursor = 'pointer';
-                    backButton.querySelector('span:last-child').textContent = 'Change Selection';
-                }
-                // Still navigate even if save fails, but warn user
-                if (confirm('Failed to save QA data. Leave anyway?')) {
+            // Condition C: always write on "Change Selection"
+            sendToServer(true)
+                .then(() => {
                     window.location.href = '/';
-                }
-            });
+                })
+                .catch(error => {
+                    console.error('Error saving QA dictionary:', error);
+                    isSavingAndGoingBack = false;
+                    if (backButton) {
+                        backButton.style.opacity = '1';
+                        backButton.style.cursor = 'pointer';
+                        backButton.querySelector('span:last-child').textContent = 'Change Selection';
+                    }
+                    if (confirm('Failed to save QA data. Leave anyway?')) {
+                        window.location.href = '/';
+                    }
+                });
         }
 
         // Event listener for keyboard events

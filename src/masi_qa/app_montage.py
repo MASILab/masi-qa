@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging, socket, shutil
+import os, json, io, argparse, re, grp, logging, socket, shutil, fcntl
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -314,8 +314,11 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
     """
     Given a QA JSON dictionary, convert it to a CSV file.
     Handles both flat (non-BIDS) and nested (BIDS) structures.
+    Uses file locking to prevent corruption from concurrent writes.
     Sets group-writable permissions so multiple users can access the file.
     """
+    lock_path = Path(pipeline_path) / '.QA.lock'
+
     if bids_mode:
         # BIDS mode: nested structure
         leaf_dicts = get_leaf_dicts(json_dict)
@@ -341,11 +344,14 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
         df = df.fillna('')
         df_sorted = df.sort_values(by=['sub', 'ses', 'acq', 'run'])
 
-        csv_path = pipeline_path / 'QA.csv'
-        df_sorted.to_csv(csv_path, index=False)
-
-        # Set group-writable permissions for multi-user access
-        set_file_permissions(csv_path)
+        with open(lock_path, 'w') as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                csv_path = pipeline_path / 'QA.csv'
+                df_sorted.to_csv(csv_path, index=False)
+                set_file_permissions(csv_path)
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
         return df_sorted
     else:
@@ -359,11 +365,14 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
         df = df[header]
         df = df.fillna('')
 
-        csv_path = pipeline_path / 'QA.csv'
-        df.to_csv(csv_path, index=False)
-
-        # Set group-writable permissions for multi-user access
-        set_file_permissions(csv_path)
+        with open(lock_path, 'w') as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            try:
+                csv_path = pipeline_path / 'QA.csv'
+                df.to_csv(csv_path, index=False)
+                set_file_permissions(csv_path)
+            finally:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
         return df
 
@@ -679,13 +688,19 @@ def convert_flat_to_bids(flat_json, pngs):
 def save_json_file(path, dict):
     """
     Given a json dictionary, save it to the json file.
+    Uses file locking to prevent corruption from concurrent writes.
     Sets group-writable permissions so multiple users can access the file.
     """
-    with open(path, 'w') as f:
-        json.dump(dict, f, indent=4)
-
-    # Set group-writable permissions for multi-user access
-    set_file_permissions(path)
+    path = Path(path)
+    lock_path = path.parent / '.QA.lock'
+    with open(lock_path, 'w') as lock_fd:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            with open(path, 'w') as f:
+                json.dump(dict, f, indent=4)
+            set_file_permissions(path)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 @app.route('/select-root', methods=['GET'])
 def select_root():
@@ -1140,26 +1155,29 @@ def serve_image(clicked_path, pipeline, image_filename):
 @app.route('/update_qa_dict', methods=['POST'])
 def update_qa_dict():
     """
-    This function is called to update the QA JSON and CSV with the new QA status and reason
+    Update the QA JSON and CSV with the new QA status and reason.
+    Supports a writeToDisk flag to skip file I/O when only metadata (date/duration) changed.
     """
-    # Get json_path and bids_mode from session
     json_path_str = session.get('json_path')
     if not json_path_str:
         return jsonify({'status': 'error', 'message': 'No active QA session'}), 400
     json_path = Path(json_path_str)
     bids_mode = session.get('bids_mode', False)
 
-    # Get the JSON data from the request
-    nested_dict = request.json
+    data = request.json
+    # Support new format { nestedDict, writeToDisk } with backward compatibility
+    if 'nestedDict' in data:
+        nested_dict = data['nestedDict']
+        write_to_disk = data.get('writeToDisk', True)
+    else:
+        nested_dict = data
+        write_to_disk = True
 
-    # Push the changes of the json file
-    save_json_file(json_path, nested_dict)
+    if write_to_disk:
+        save_json_file(json_path, nested_dict)
+        _ = convert_json_to_csv(nested_dict, json_path.parent, bids_mode=bids_mode)
 
-    # Also update the csv file (with appropriate mode)
-    _ = convert_json_to_csv(nested_dict, json_path.parent, bids_mode=bids_mode)
-
-    # Return a JSON response with the updated dictionary
-    return jsonify({'status': 'success', 'updatedDict': nested_dict})
+    return jsonify({'status': 'success'})
 
 def _run_app(bids_mode=False):
     """Shared startup logic for both entry points."""
