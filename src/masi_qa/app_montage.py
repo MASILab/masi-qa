@@ -1165,13 +1165,8 @@ def update_qa_dict():
     bids_mode = session.get('bids_mode', False)
 
     data = request.json
-    # Support new format { nestedDict, writeToDisk } with backward compatibility
-    if 'nestedDict' in data:
-        nested_dict = data['nestedDict']
-        write_to_disk = data.get('writeToDisk', True)
-    else:
-        nested_dict = data
-        write_to_disk = True
+    nested_dict = data['nestedDict']
+    write_to_disk = data.get('writeToDisk', True)
 
     if write_to_disk:
         save_json_file(json_path, nested_dict)
