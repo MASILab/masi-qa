@@ -646,16 +646,28 @@
                 qaDict['reason'] = reasonInput;
             }
 
-            // Push the updated entry to the server (fire-and-forget for fast navigation)
-            saveImageIncremental(imageName, qaDict)
-                .then(success => {
-                    if (success) {
-                        console.log('Incremental save successful');
-                    } else {
-                        console.warn('Incremental save failed');
-                    }
-                    updateAllReviewedBanner();
-                });
+            // Push the updated dictionary to the server
+            fetch('/update_qa_dict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(nestedDict)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Updated QA Dictionary:', data);
+                // Update banner visibility
+                updateAllReviewedBanner();
+            })
+            .catch(error => {
+                console.error('Error updating QA dictionary:', error);
+            });
 
             currentImageIndex = (currentImageIndex + direction + imagePaths.length) % imagePaths.length;
 
@@ -775,60 +787,6 @@
             // console.log('Username:', '{{ user }}');
         }
 
-        // Function to build key_path for incremental update API
-        function buildKeyPath(imageName, bidsFields) {
-            if (!bidsMode) {
-                return [imageName];
-            }
-            // BIDS mode: build path from sub, ses, acq, run
-            const keyPath = [bidsFields.sub];
-            if (bidsFields.ses) keyPath.push(bidsFields.ses);
-            if (bidsFields.acq) keyPath.push(bidsFields.acq);
-            if (bidsFields.run) keyPath.push(bidsFields.run);
-            return keyPath;
-        }
-
-        // Function to save single image state incrementally
-        async function saveImageIncremental(imageName, qaDict) {
-            const bidsFields = getBIDSFieldsFromPNG(imageName, false);
-            const keyPath = buildKeyPath(imageName, bidsFields);
-
-            // Build the data payload (only the updatable fields)
-            const data = {
-                QA_status: qaDict['QA_status'],
-                reason: qaDict['reason'],
-                user: qaDict['user'],
-                date: qaDict['date']
-            };
-
-            // Include duration only for non-BIDS mode
-            if (!bidsMode && 'duration' in qaDict) {
-                data.duration = qaDict['duration'];
-            }
-
-            try {
-                const response = await fetch('/update_single_qa', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        key_path: keyPath,
-                        data: data
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-
-                const result = await response.json();
-                if (DEBUG) console.log('Incremental save result:', result);
-                return true;
-            } catch (error) {
-                console.error('Error in incremental save:', error);
-                return false;
-            }
-        }
-
         // Function to update review status (progress bar or completion banner)
         function updateAllReviewedBanner() {
             const banner = document.getElementById('allReviewedBanner');
@@ -908,13 +866,22 @@
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
 
-            // Push to server using incremental save
-            const success = await saveImageIncremental(imageName, qaDict);
-            if (success) {
-                console.log('Saved QA state');
+            // Push to server
+            try {
+                const response = await fetch('/update_qa_dict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(nestedDict)
+                });
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                console.log('Saved QA state:', data);
+                // Update banner visibility after save
                 updateAllReviewedBanner();
-            } else {
-                console.error('Error saving QA state');
+            } catch (error) {
+                console.error('Error saving QA state:', error);
             }
         }
 
@@ -1094,30 +1061,38 @@
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
 
-            // Save to server using incremental save, then redirect
-            saveImageIncremental(imageName, qaDict)
-                .then(success => {
-                    if (success) {
-                        console.log('Saved QA Dictionary before leaving');
-                        window.location.href = '/';
-                    } else {
-                        throw new Error('Incremental save failed');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error saving QA dictionary:', error);
-                    // Reset button state
-                    isSavingAndGoingBack = false;
-                    if (backButton) {
-                        backButton.style.opacity = '1';
-                        backButton.style.cursor = 'pointer';
-                        backButton.querySelector('span:last-child').textContent = 'Change Selection';
-                    }
-                    // Still navigate even if save fails, but warn user
-                    if (confirm('Failed to save QA data. Leave anyway?')) {
-                        window.location.href = '/';
-                    }
-                });
+            // Save to server and then redirect
+            fetch('/update_qa_dict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(nestedDict)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Saved QA Dictionary before leaving:', data);
+                window.location.href = '/';
+            })
+            .catch(error => {
+                console.error('Error saving QA dictionary:', error);
+                // Reset button state
+                isSavingAndGoingBack = false;
+                if (backButton) {
+                    backButton.style.opacity = '1';
+                    backButton.style.cursor = 'pointer';
+                    backButton.querySelector('span:last-child').textContent = 'Change Selection';
+                }
+                // Still navigate even if save fails, but warn user
+                if (confirm('Failed to save QA data. Leave anyway?')) {
+                    window.location.href = '/';
+                }
+            });
         }
 
         // Event listener for keyboard events

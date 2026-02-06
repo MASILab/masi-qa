@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging, socket, shutil, tempfile
+import os, json, io, argparse, re, grp, logging, socket, shutil
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -367,48 +367,6 @@ def convert_json_to_csv(json_dict, pipeline_path, bids_mode=False):
 
         return df
 
-
-def update_csv_entry(csv_path, key_data, entry_data, bids_mode=False):
-    """
-    Update a single row in QA.csv without regenerating the entire file.
-
-    Args:
-        csv_path: Path to QA.csv
-        key_data: Dictionary with key fields to identify the row
-                  - Non-BIDS: {'filename': 'image.png'}
-                  - BIDS: {'sub': 'sub-001', 'ses': 'ses-01', 'acq': '', 'run': ''}
-        entry_data: Dictionary of fields to update
-        bids_mode: Whether using BIDS format
-    """
-    csv_path = Path(csv_path)
-    df = pd.read_csv(csv_path)
-
-    if bids_mode:
-        # Build mask for BIDS key fields
-        mask = (df['sub'] == key_data.get('sub', ''))
-        if 'ses' in df.columns:
-            mask &= (df['ses'].fillna('') == key_data.get('ses', ''))
-        if 'acq' in df.columns:
-            mask &= (df['acq'].fillna('') == key_data.get('acq', ''))
-        if 'run' in df.columns:
-            mask &= (df['run'].fillna('') == key_data.get('run', ''))
-    else:
-        # Non-BIDS: match by filename
-        mask = df['filename'] == key_data['filename']
-
-    # Update matching row(s)
-    if mask.any():
-        for field, value in entry_data.items():
-            if field in df.columns:
-                df.loc[mask, field] = value
-
-    # Atomic write
-    def write_csv(f):
-        df.to_csv(f, index=False)
-
-    atomic_write_file(csv_path, write_csv)
-
-
 def read_csv_to_json(df):
     """
     Given a QA CSV dataframe, convert it to a QA JSON dictionary
@@ -728,59 +686,6 @@ def save_json_file(path, dict):
 
     # Set group-writable permissions for multi-user access
     set_file_permissions(path)
-
-
-def atomic_write_file(path, write_func):
-    """
-    Write file atomically using temp file + rename pattern.
-    This ensures the file is never corrupted if the process is interrupted.
-    """
-    path = Path(path)
-    dir_path = path.parent
-    fd, temp_path = tempfile.mkstemp(dir=str(dir_path), suffix='.tmp')
-    try:
-        with os.fdopen(fd, 'w') as f:
-            write_func(f)
-        os.replace(temp_path, str(path))
-        set_file_permissions(path)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-        raise
-
-
-def update_json_entry(json_path, key_path, entry_data):
-    """
-    Update a single entry in QA.json without rewriting the entire file.
-
-    Args:
-        json_path: Path to QA.json
-        key_path: List of keys to navigate to the entry
-                  - Non-BIDS: ["filename.png"]
-                  - BIDS: ["sub-001", "ses-01"] (with optional acq, run)
-        entry_data: Dictionary of fields to update
-
-    Returns:
-        Updated json_dict
-    """
-    with open(json_path, 'r') as f:
-        json_dict = json.load(f)
-
-    # Navigate to the entry
-    current = json_dict
-    for key in key_path[:-1]:
-        if key and key in current:
-            current = current[key]
-
-    # Update the leaf entry
-    final_key = key_path[-1] if key_path else None
-    if final_key and final_key in current:
-        current[final_key].update(entry_data)
-
-    # Atomic write
-    atomic_write_file(json_path, lambda f: json.dump(json_dict, f, indent=4))
-    return json_dict
-
 
 @app.route('/select-root', methods=['GET'])
 def select_root():
@@ -1178,65 +1083,6 @@ def update_qa_dict():
 
     # Return a JSON response with the updated dictionary
     return jsonify({'status': 'success', 'updatedDict': nested_dict})
-
-
-@app.route('/update_single_qa', methods=['POST'])
-def update_single_qa():
-    """
-    Update a single QA entry incrementally.
-
-    Expected JSON payload:
-    {
-        "key_path": ["filename.png"] or ["sub-001", "ses-01", ...],
-        "data": {
-            "QA_status": "yes",
-            "reason": "",
-            "user": "reviewer",
-            "date": "2024-07-10 00:09:13",
-            "duration": 45  // non-BIDS only
-        }
-    }
-    """
-    json_path_str = session.get('json_path')
-    if not json_path_str:
-        return jsonify({'status': 'error', 'message': 'No active QA session'}), 400
-
-    json_path = Path(json_path_str)
-    csv_path = json_path.parent / 'QA.csv'
-    bids_mode = session.get('bids_mode', False)
-
-    request_data = request.json
-    key_path = request_data.get('key_path', [])
-    entry_data = request_data.get('data', {})
-
-    if not key_path:
-        return jsonify({'status': 'error', 'message': 'key_path is required'}), 400
-
-    try:
-        # Update JSON incrementally
-        update_json_entry(json_path, key_path, entry_data)
-
-        # Build key_data for CSV update
-        if bids_mode:
-            key_data = {'sub': key_path[0] if key_path else '', 'ses': '', 'acq': '', 'run': ''}
-            for k in key_path[1:]:
-                if k and k.startswith('ses-'):
-                    key_data['ses'] = k
-                elif k and k.startswith('acq-'):
-                    key_data['acq'] = k
-                elif k and k.startswith('run-'):
-                    key_data['run'] = k
-        else:
-            key_data = {'filename': key_path[0]}
-
-        # Update CSV incrementally
-        update_csv_entry(csv_path, key_data, entry_data, bids_mode)
-
-        return jsonify({'status': 'success'})
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
 
 def _run_app(bids_mode=False):
     """Shared startup logic for both entry points."""
