@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, logging, socket, shutil, tempfile, fcntl, sqlite3
+import os, json, io, argparse, re, grp, logging, socket, shutil, tempfile, fcntl
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -802,529 +802,6 @@ def update_json_entry(json_path, key_path, entry_data):
     return json_dict
 
 
-# ============================================================================
-# SQLite Database Functions
-# ============================================================================
-
-def get_db_path(pipeline_path):
-    """Get the path to the SQLite database file."""
-    return Path(pipeline_path) / 'QA.db'
-
-
-def get_db_connection(db_path):
-    """
-    Get a database connection with proper settings.
-    Uses WAL mode for better concurrency.
-    Used for one-time operations (init, migration, export).
-    """
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL')
-    return conn
-
-
-# Module-level connection cache for pooling: {db_path_str: connection}
-_db_connections = {}
-
-
-def get_pooled_connection(db_path):
-    """
-    Get or create a pooled database connection.
-    Used for frequent write operations during QA review to avoid
-    connection open/close overhead and improve WAL checkpointing.
-    """
-    db_path_str = str(db_path)
-    if db_path_str not in _db_connections or _db_connections[db_path_str] is None:
-        conn = sqlite3.connect(db_path_str, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        # WAL mode is persistent, but set it in case this is a new connection
-        conn.execute('PRAGMA journal_mode=WAL')
-        # NORMAL sync is safe for WAL mode and faster than FULL
-        conn.execute('PRAGMA synchronous=NORMAL')
-        _db_connections[db_path_str] = conn
-    return _db_connections[db_path_str]
-
-
-def close_pooled_connection(db_path):
-    """
-    Close and checkpoint a pooled connection.
-    Call this when user leaves the QA page to ensure WAL is merged
-    back into the main database file.
-    """
-    db_path_str = str(db_path)
-    if db_path_str in _db_connections and _db_connections[db_path_str]:
-        conn = _db_connections[db_path_str]
-        try:
-            # TRUNCATE mode: checkpoint and truncate WAL file to zero bytes
-            conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-            conn.close()
-        except Exception:
-            pass
-        _db_connections[db_path_str] = None
-
-
-def init_database(db_path, bids_mode=False):
-    """
-    Initialize the SQLite database with the required schema.
-    Creates tables if they don't exist.
-    """
-    conn = get_db_connection(db_path)
-    try:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS qa_entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT,
-                sub TEXT,
-                ses TEXT,
-                acq TEXT,
-                run TEXT,
-                QA_status TEXT NOT NULL DEFAULT 'yes',
-                reason TEXT DEFAULT '',
-                user TEXT DEFAULT '',
-                date TEXT DEFAULT '',
-                duration REAL DEFAULT 0,
-                bids_mode INTEGER NOT NULL DEFAULT 0
-            )
-        ''')
-        # Create indexes for efficient lookups
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_filename ON qa_entries(filename)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_bids ON qa_entries(sub, ses, acq, run)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_unreviewed ON qa_entries(date)')
-
-        # Metadata table
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS qa_metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        conn.commit()
-    finally:
-        conn.close()
-
-    # Set file permissions
-    set_file_permissions(db_path)
-
-
-def detect_storage_format(pipeline_path):
-    """
-    Detect what storage format exists in the directory.
-    Returns: 'sqlite', 'json', 'both', or 'none'
-    """
-    pipeline_path = Path(pipeline_path)
-    db_exists = (pipeline_path / 'QA.db').exists()
-    json_exists = (pipeline_path / 'QA.json').exists()
-
-    if db_exists and json_exists:
-        return 'both'
-    elif db_exists:
-        return 'sqlite'
-    elif json_exists:
-        return 'json'
-    else:
-        return 'none'
-
-
-def db_add_qa_entry(conn, entry_data, bids_mode=False):
-    """
-    Add a new QA entry to the database.
-    """
-    if bids_mode:
-        conn.execute('''
-            INSERT INTO qa_entries (sub, ses, acq, run, QA_status, reason, user, date, bids_mode)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        ''', (
-            entry_data.get('sub', ''),
-            entry_data.get('ses', ''),
-            entry_data.get('acq', ''),
-            entry_data.get('run', ''),
-            entry_data.get('QA_status', 'yes'),
-            entry_data.get('reason', ''),
-            entry_data.get('user', ''),
-            entry_data.get('date', '')
-        ))
-    else:
-        conn.execute('''
-            INSERT INTO qa_entries (filename, QA_status, reason, user, date, duration, bids_mode)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
-        ''', (
-            entry_data.get('filename', ''),
-            entry_data.get('QA_status', 'yes'),
-            entry_data.get('reason', ''),
-            entry_data.get('user', ''),
-            entry_data.get('date', ''),
-            entry_data.get('duration', 0)
-        ))
-
-
-def db_update_qa_entry(db_path, key_data, entry_data, bids_mode=False):
-    """
-    Update a single QA entry in the database.
-    This is the main function called during QA review.
-    Uses pooled connection for efficiency during rapid navigation.
-    """
-    conn = get_pooled_connection(db_path)
-    if bids_mode:
-        # Build SET clause dynamically
-        set_fields = []
-        values = []
-        for field in ['QA_status', 'reason', 'user', 'date']:
-            if field in entry_data:
-                set_fields.append(f'{field} = ?')
-                values.append(entry_data[field])
-
-        if not set_fields:
-            return
-
-        # Add WHERE clause values
-        values.extend([
-            key_data.get('sub', ''),
-            key_data.get('ses', ''),
-            key_data.get('acq', ''),
-            key_data.get('run', '')
-        ])
-
-        sql = f'''
-            UPDATE qa_entries
-            SET {', '.join(set_fields)}
-            WHERE sub = ? AND COALESCE(ses, '') = ? AND COALESCE(acq, '') = ? AND COALESCE(run, '') = ?
-        '''
-        conn.execute(sql, values)
-    else:
-        # Non-BIDS mode
-        set_fields = []
-        values = []
-        for field in ['QA_status', 'reason', 'user', 'date', 'duration']:
-            if field in entry_data:
-                set_fields.append(f'{field} = ?')
-                values.append(entry_data[field])
-
-        if not set_fields:
-            return
-
-        values.append(key_data.get('filename', ''))
-
-        sql = f'''
-            UPDATE qa_entries
-            SET {', '.join(set_fields)}
-            WHERE filename = ?
-        '''
-        conn.execute(sql, values)
-
-    conn.commit()
-    # Note: Connection stays open for reuse - closed via close_pooled_connection()
-
-
-def db_get_all_qa_entries(db_path, bids_mode=False):
-    """
-    Get all QA entries from the database.
-    """
-    conn = get_db_connection(db_path)
-    try:
-        if bids_mode:
-            cursor = conn.execute('''
-                SELECT sub, ses, acq, run, QA_status, reason, user, date
-                FROM qa_entries
-                WHERE bids_mode = 1
-                ORDER BY sub, ses, acq, run
-            ''')
-        else:
-            cursor = conn.execute('''
-                SELECT filename, QA_status, reason, user, date, duration
-                FROM qa_entries
-                WHERE bids_mode = 0
-                ORDER BY filename
-            ''')
-
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
-
-
-def migrate_json_to_sqlite(pipeline_path, bids_mode=False):
-    """
-    Migrate existing QA.json data to SQLite database.
-    Called when QA.json exists but QA.db does not.
-    """
-    pipeline_path = Path(pipeline_path)
-    json_path = pipeline_path / 'QA.json'
-    db_path = get_db_path(pipeline_path)
-
-    # Read existing JSON
-    with open(json_path, 'r') as f:
-        json_dict = json.load(f)
-
-    # Initialize database
-    init_database(db_path, bids_mode)
-
-    # Extract entries and insert
-    conn = get_db_connection(db_path)
-    try:
-        if bids_mode:
-            # BIDS mode - extract leaf dicts
-            leaf_data = get_leaf_dicts(json_dict)
-            for paths, leaf_dict in leaf_data:
-                entry = {
-                    'sub': leaf_dict.get('sub', ''),
-                    'ses': leaf_dict.get('ses', ''),
-                    'acq': leaf_dict.get('acq', ''),
-                    'run': leaf_dict.get('run', ''),
-                    'QA_status': leaf_dict.get('QA_status', 'yes'),
-                    'reason': leaf_dict.get('reason', ''),
-                    'user': leaf_dict.get('user', ''),
-                    'date': leaf_dict.get('date', '')
-                }
-                db_add_qa_entry(conn, entry, bids_mode=True)
-        else:
-            # Non-BIDS mode - flat structure
-            for filename, entry in json_dict.items():
-                entry_data = {
-                    'filename': filename,
-                    'QA_status': entry.get('QA_status', 'yes'),
-                    'reason': entry.get('reason', ''),
-                    'user': entry.get('user', ''),
-                    'date': entry.get('date', ''),
-                    'duration': entry.get('duration', 0)
-                }
-                db_add_qa_entry(conn, entry_data, bids_mode=False)
-
-        conn.commit()
-
-        # Update metadata
-        conn.execute('INSERT OR REPLACE INTO qa_metadata VALUES (?, ?)',
-                    ('migrated_from_json', datetime.now().isoformat()))
-        conn.commit()
-
-        print(f"Successfully migrated QA data from JSON to SQLite")
-        return True
-    except Exception as e:
-        print(f"Migration failed: {e}")
-        # Clean up failed migration
-        if db_path.exists():
-            db_path.unlink()
-        raise
-    finally:
-        conn.close()
-
-
-def create_empty_database(pipeline_path, pngs, bids_mode=False):
-    """
-    Create a new empty database with default entries for all PNG files.
-    Called when no existing QA data (JSON or SQLite) exists.
-    """
-    pipeline_path = Path(pipeline_path)
-    db_path = get_db_path(pipeline_path)
-
-    # Initialize database
-    init_database(db_path, bids_mode)
-
-    conn = get_db_connection(db_path)
-    try:
-        for png in tqdm(pngs, desc="Creating database entries"):
-            if bids_mode:
-                tags = get_BIDS_fields_from_png(png)
-                if tags:
-                    entry = {
-                        'sub': tags['sub'],
-                        'ses': tags['ses'] if tags['ses'] else '',
-                        'acq': tags['acq'] if tags['acq'] else '',
-                        'run': tags['run'] if tags['run'] else '',
-                        'QA_status': 'yes',
-                        'reason': '',
-                        'user': '',
-                        'date': ''
-                    }
-                    db_add_qa_entry(conn, entry, bids_mode=True)
-            else:
-                entry = {
-                    'filename': png,
-                    'QA_status': 'yes',
-                    'reason': '',
-                    'user': '',
-                    'date': '',
-                    'duration': 0
-                }
-                db_add_qa_entry(conn, entry, bids_mode=False)
-
-        conn.commit()
-        print(f"Created database with {len(pngs)} entries")
-    finally:
-        conn.close()
-
-
-def sync_pngs_with_db(db_path, pngs, bids_mode=False):
-    """
-    Ensure all PNG files have corresponding database entries.
-    Adds default entries for new PNGs.
-    """
-    conn = get_db_connection(db_path)
-    try:
-        if bids_mode:
-            # Get existing BIDS keys from database
-            cursor = conn.execute('SELECT sub, ses, acq, run FROM qa_entries WHERE bids_mode = 1')
-            existing = set()
-            for row in cursor:
-                existing.add((row['sub'], row['ses'] or '', row['acq'] or '', row['run'] or ''))
-
-            # Add missing entries
-            added = 0
-            for png in pngs:
-                tags = get_BIDS_fields_from_png(png)
-                if tags:
-                    key = (tags['sub'], tags['ses'] or '', tags['acq'] or '', tags['run'] or '')
-                    if key not in existing:
-                        entry = {
-                            'sub': tags['sub'],
-                            'ses': tags['ses'] if tags['ses'] else '',
-                            'acq': tags['acq'] if tags['acq'] else '',
-                            'run': tags['run'] if tags['run'] else '',
-                            'QA_status': 'yes',
-                            'reason': '',
-                            'user': '',
-                            'date': ''
-                        }
-                        db_add_qa_entry(conn, entry, bids_mode=True)
-                        added += 1
-        else:
-            # Get existing filenames from database
-            cursor = conn.execute('SELECT filename FROM qa_entries WHERE bids_mode = 0')
-            existing = set(row['filename'] for row in cursor)
-
-            # Add missing entries
-            added = 0
-            for png in pngs:
-                if png not in existing:
-                    entry = {
-                        'filename': png,
-                        'QA_status': 'yes',
-                        'reason': '',
-                        'user': '',
-                        'date': '',
-                        'duration': 0
-                    }
-                    db_add_qa_entry(conn, entry, bids_mode=False)
-                    added += 1
-
-        if added > 0:
-            conn.commit()
-            print(f"Added {added} new entries to database")
-    finally:
-        conn.close()
-
-
-def build_json_dict_from_db(db_path, bids_mode=False):
-    """
-    Build the nested dictionary structure from database.
-    Used to pass data to frontend templates (maintains existing API).
-    """
-    entries = db_get_all_qa_entries(db_path, bids_mode)
-
-    if bids_mode:
-        # Build nested BIDS structure
-        json_dict = {}
-        for entry in entries:
-            sub = entry.get('sub', '')
-            ses = entry.get('ses', '')
-            acq = entry.get('acq', '')
-            run = entry.get('run', '')
-
-            current = json_dict
-            for tag in [sub, ses, acq, run]:
-                if tag:
-                    current = current.setdefault(tag, {})
-
-            current.update({
-                'QA_status': entry.get('QA_status', 'yes'),
-                'reason': entry.get('reason', ''),
-                'user': entry.get('user', ''),
-                'date': entry.get('date', ''),
-                'sub': sub,
-                'ses': ses,
-                'acq': acq,
-                'run': run
-            })
-        return json_dict
-    else:
-        # Build flat structure
-        json_dict = {}
-        for entry in entries:
-            filename = entry.get('filename', '')
-            json_dict[filename] = {
-                'filename': filename,
-                'QA_status': entry.get('QA_status', 'yes'),
-                'reason': entry.get('reason', ''),
-                'user': entry.get('user', ''),
-                'date': entry.get('date', ''),
-                'duration': entry.get('duration', 0)
-            }
-        return json_dict
-
-
-def export_db_to_json(db_path, output_path, bids_mode=False):
-    """
-    Export database contents to JSON file.
-    Reconstructs the nested BIDS structure if in BIDS mode.
-    """
-    json_dict = build_json_dict_from_db(db_path, bids_mode)
-
-    # Atomic write
-    atomic_write_file(output_path, lambda f: json.dump(json_dict, f, indent=4))
-    print(f"Exported database to {output_path}")
-    return json_dict
-
-
-def export_db_to_csv(db_path, output_path, bids_mode=False):
-    """
-    Export database contents to CSV file.
-    """
-    entries = db_get_all_qa_entries(db_path, bids_mode)
-
-    if bids_mode:
-        header = ['sub', 'ses', 'acq', 'run', 'QA_status', 'reason', 'user', 'date']
-    else:
-        header = ['filename', 'QA_status', 'reason', 'user', 'date', 'duration']
-
-    df = pd.DataFrame(entries)
-
-    # Ensure all columns exist
-    for col in header:
-        if col not in df.columns:
-            df[col] = ''
-
-    df = df[header].fillna('')
-
-    if bids_mode:
-        df = df.sort_values(by=['sub', 'ses', 'acq', 'run'])
-
-    # Atomic write
-    def write_csv(f):
-        df.to_csv(f, index=False)
-
-    atomic_write_file(output_path, write_csv)
-    print(f"Exported database to {output_path}")
-    return df
-
-
-def export_all(db_path, pipeline_path, bids_mode=False):
-    """
-    Export both JSON and CSV from database.
-    Called by export endpoints and "Change Selection" button.
-    """
-    pipeline_path = Path(pipeline_path)
-    json_path = pipeline_path / 'QA.json'
-    csv_path = pipeline_path / 'QA.csv'
-
-    export_db_to_json(db_path, json_path, bids_mode)
-    export_db_to_csv(db_path, csv_path, bids_mode)
-
-    return True
-
-
-# ============================================================================
-# End of SQLite Database Functions
-# ============================================================================
-
-
 @app.route('/select-root', methods=['GET'])
 def select_root():
     """Redirect to main page which now includes root directory selection."""
@@ -1531,89 +1008,6 @@ def datasets(clicked_path):
         print("Redirecting clicked path:", clicked_path)
     return redirect(url_for('index', dataset=clicked_path))
 
-@app.route('/qa')
-@require_qa_directory
-def render_montage_direct():
-    """Direct QA for standard mode - qa_directory is the target containing PNG files."""
-    qa_directory = get_qa_directory()
-    bids_mode = session.get('bids_mode', False)
-    user_name = session.get('user_name', '')
-
-    print(f"Loading images from: {qa_directory} (Standard mode)")
-
-    # Use qa_directory directly as the target
-    pipeline_path = Path(qa_directory)
-
-    # Check write permissions before proceeding
-    can_write, file_issues, files_missing = check_write_permissions(pipeline_path)
-    if not can_write:
-        return render_template('permission_error.html',
-                               clicked_path='',
-                               pipeline='',
-                               pipeline_path=str(pipeline_path),
-                               file_issues=file_issues,
-                               files_missing=files_missing)
-
-    pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
-    pngs = sorted(pngs, key=str.lower)  # Case-insensitive sort for consistent ordering
-
-    # For direct mode, pngs_files are the same as pngs (relative to qa_directory)
-    pngs_files = pngs
-
-    # Detect storage format and handle accordingly
-    db_path = get_db_path(pipeline_path)
-    storage_format = detect_storage_format(pipeline_path)
-
-    if storage_format == 'json':
-        # Existing JSON but no DB - check format first, then migrate
-        json_path = pipeline_path / 'QA.json'
-        with open(json_path, 'r') as f:
-            json_dict = json.load(f)
-
-        existing_format = detect_json_format(json_dict)
-        if existing_format != 'empty' and existing_format != 'unknown':
-            if existing_format == 'bids':
-                # Standard mode but existing data is BIDS format
-                return render_template('mode_mismatch.html',
-                                       clicked_path='',
-                                       pipeline='',
-                                       selected_mode='flat',
-                                       existing_format=existing_format,
-                                       conversion_error=None)
-
-        print("Migrating existing QA.json to SQLite database...")
-        migrate_json_to_sqlite(pipeline_path, bids_mode=False)
-
-    elif storage_format == 'none':
-        # No existing data - create empty database
-        print("Creating new QA database...")
-        create_empty_database(pipeline_path, pngs_files, bids_mode=False)
-
-    # Sync any new PNGs with database
-    sync_pngs_with_db(db_path, pngs_files, bids_mode=False)
-
-    # Store db_path in session for update_single_qa
-    session['db_path'] = str(db_path)
-    session['bids_mode'] = bids_mode
-
-    # Build json_dict from database for frontend template (maintains existing API)
-    json_dict = build_json_dict_from_db(db_path, bids_mode=False)
-
-    # Use database key order for consistent ordering
-    pngs_files = list(json_dict.keys())
-
-    # For direct mode, image_paths are the same as pngs_files
-    image_paths = pngs_files
-
-    return render_template('montage.html',
-                           clicked_path='',
-                           pipeline='',
-                           image_paths=image_paths,
-                           json_dict=json_dict,
-                           bids_mode=bids_mode,
-                           user_name=user_name,
-                           qa_directory=qa_directory)
-
 @app.route('/datasets/<path:clicked_path>/<path:pipeline>')
 @require_qa_directory
 def render_montage(clicked_path, pipeline):
@@ -1654,16 +1048,24 @@ def render_montage(clicked_path, pipeline):
                                    clicked_path=clicked_path,
                                    pipeline=pipeline)
 
-    # Detect storage format and handle accordingly
-    db_path = get_db_path(pipeline_path)
-    storage_format = detect_storage_format(pipeline_path)
+    # Check to see if the json file exists. If it doesn't, create it
+    json_path = pipeline_path / 'QA.json'
+    session['json_path'] = str(json_path)
+    session['bids_mode'] = bids_mode  # Store for update_qa_dict
 
-    if storage_format == 'json':
-        # Existing JSON but no DB - check format first, then migrate
-        json_path = pipeline_path / 'QA.json'
+    if not json_path.exists():
+        print("Creating new QA session...")
+        if bids_mode:
+            json_dict = create_bids_json_dict(pngs_files)
+        else:
+            json_dict = create_json_dict(pngs_files)
+        df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=bids_mode)
+        save_json_file(json_path, json_dict)
+    else:
         with open(json_path, 'r') as f:
             json_dict = json.load(f)
 
+        # Detect format mismatch between selected mode and existing data
         existing_format = detect_json_format(json_dict)
         selected_mode = 'bids' if bids_mode else 'flat'
 
@@ -1684,27 +1086,30 @@ def render_montage(clicked_path, pipeline):
                                        existing_format=existing_format,
                                        conversion_error=conversion_error)
 
-        print("Migrating existing QA.json to SQLite database...")
-        migrate_json_to_sqlite(pipeline_path, bids_mode)
+        # Check to make sure there are no duplicate QA dictionaries
+        paths, leaf_dicts = zip(*get_leaf_dicts(json_dict))
+        assert are_unique_qa_dicts(leaf_dicts), f"There are duplicate QA dictionaries in the json file {json_path}. Please correct before attempting QA."
 
-    elif storage_format == 'none':
-        # No existing data - create empty database
-        print("Creating new QA database...")
-        create_empty_database(pipeline_path, pngs_files, bids_mode)
+        # Check to make sure that the paths to the json dictionaries are correct
+        assert_tags_in_dict(paths, leaf_dicts)
 
-    # Sync any new PNGs with database
-    sync_pngs_with_db(db_path, pngs_files, bids_mode)
+        # Check to make sure that the QA status is either 'yes', 'no', or 'maybe'
+        assert_valid_qa_status(leaf_dicts)
 
-    # Store db_path in session for update_single_qa
-    session['db_path'] = str(db_path)
-    session['bids_mode'] = bids_mode
+        # Check to make sure that every json entry has a corresponding png file
+        check_png_for_json(leaf_dicts, [str(x) for x in pngs_files])
 
-    # Build json_dict from database for frontend template (maintains existing API)
-    json_dict = build_json_dict_from_db(db_path, bids_mode)
+        # If the png does not have a corresponding json entry, it needs to be added
+        if bids_mode:
+            json_dict = check_json_for_png_bids(json_dict, pngs_files)
+        else:
+            json_dict = check_json_for_png(json_dict, pngs_files)
 
-    # For non-BIDS mode, use database key order for consistent ordering
-    if not bids_mode:
-        pngs_files = list(json_dict.keys())
+        # Use QA.json key order for consistent ordering across sessions
+        # For BIDS mode, the sorted glob order is already correct (BIDS naming sorts by subject/session)
+        # For non-BIDS mode, use JSON key order to preserve original ordering
+        if not bids_mode:
+            pngs_files = list(json_dict.keys())
 
     # Construct image_paths from the final pngs_files order
     prefix = clicked_path + '/' + pipeline + '/'
@@ -1716,8 +1121,7 @@ def render_montage(clicked_path, pipeline):
                            image_paths=image_paths,
                            json_dict=json_dict,
                            bids_mode=bids_mode,
-                           user_name=user_name,
-                           qa_directory=qa_directory)
+                           user_name=user_name)
 
     #maybe assert the following python functions:
 
@@ -1767,23 +1171,6 @@ def serve_image(clicked_path, pipeline, image_filename):
     else:
         # Return a 404 error if the file doesn't exist
         return 'Image not found', 404
-
-@app.route('/qa/<path:image_filename>')
-@require_qa_directory
-def serve_image_direct(image_filename):
-    """
-    Serve image files for standard mode (direct QA without dataset/pipeline structure).
-    """
-    qa_directory = get_qa_directory()
-
-    # Construct the full path to the image file (directly under qa_directory)
-    image_path = os.path.join(qa_directory, image_filename)
-
-    # Check if the image file exists
-    if os.path.isfile(image_path):
-        return send_file(image_path, mimetype='image/png')
-    else:
-        return 'Image not found', 404
 # def serve_image(image_path):
 #     # Construct the full path to the image file
 #     #image_path = os.path.join(QA_directory, clicked_path, pipeline, image_filename)
@@ -1825,7 +1212,7 @@ def update_qa_dict():
 def update_single_qa():
     """
     Update a single QA entry incrementally.
-    Now uses SQLite database for efficient single-row updates.
+    Uses a unified lock for both JSON and CSV to ensure atomicity.
 
     Expected JSON payload:
     {
@@ -1839,11 +1226,12 @@ def update_single_qa():
         }
     }
     """
-    db_path_str = session.get('db_path')
-    if not db_path_str:
+    json_path_str = session.get('json_path')
+    if not json_path_str:
         return jsonify({'status': 'error', 'message': 'No active QA session'}), 400
 
-    db_path = Path(db_path_str)
+    json_path = Path(json_path_str)
+    csv_path = json_path.parent / 'QA.csv'
     bids_mode = session.get('bids_mode', False)
 
     request_data = request.json
@@ -1853,118 +1241,69 @@ def update_single_qa():
     if not key_path:
         return jsonify({'status': 'error', 'message': 'key_path is required'}), 400
 
-    try:
-        # Convert key_path to key_data dict for database lookup
-        if bids_mode:
-            key_data = {'sub': key_path[0] if key_path else '', 'ses': '', 'acq': '', 'run': ''}
-            for k in key_path[1:]:
-                if k and k.startswith('ses-'):
-                    key_data['ses'] = k
-                elif k and k.startswith('acq-'):
-                    key_data['acq'] = k
-                elif k and k.startswith('run-'):
-                    key_data['run'] = k
-        else:
-            key_data = {'filename': key_path[0]}
+    # Use a unified lock for both JSON and CSV updates
+    lock_path = json_path.parent / '.QA.lock'
 
-        # Update the database entry (SQLite handles concurrency)
-        db_update_qa_entry(db_path, key_data, entry_data, bids_mode)
+    try:
+        with open(lock_path, 'w') as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+            try:
+                # Update JSON
+                with open(json_path, 'r') as f:
+                    json_dict = json.load(f)
+
+                # Navigate to the entry
+                current = json_dict
+                for key in key_path[:-1]:
+                    if key and key in current:
+                        current = current[key]
+
+                # Update the leaf entry
+                final_key = key_path[-1] if key_path else None
+                if final_key and final_key in current:
+                    current[final_key].update(entry_data)
+
+                # Atomic write JSON
+                atomic_write_file(json_path, lambda f: json.dump(json_dict, f, indent=4))
+
+                # Update CSV
+                df = pd.read_csv(csv_path)
+
+                if bids_mode:
+                    # Build mask for BIDS key fields
+                    key_data = {'sub': key_path[0] if key_path else '', 'ses': '', 'acq': '', 'run': ''}
+                    for k in key_path[1:]:
+                        if k and k.startswith('ses-'):
+                            key_data['ses'] = k
+                        elif k and k.startswith('acq-'):
+                            key_data['acq'] = k
+                        elif k and k.startswith('run-'):
+                            key_data['run'] = k
+
+                    mask = (df['sub'] == key_data.get('sub', ''))
+                    if 'ses' in df.columns:
+                        mask &= (df['ses'].fillna('') == key_data.get('ses', ''))
+                    if 'acq' in df.columns:
+                        mask &= (df['acq'].fillna('') == key_data.get('acq', ''))
+                    if 'run' in df.columns:
+                        mask &= (df['run'].fillna('') == key_data.get('run', ''))
+                else:
+                    # Non-BIDS: match by filename
+                    mask = df['filename'] == key_path[0]
+
+                # Update matching row(s)
+                if mask.any():
+                    for field, value in entry_data.items():
+                        if field in df.columns:
+                            df.loc[mask, field] = value
+
+                # Atomic write CSV
+                atomic_write_file(csv_path, lambda f: df.to_csv(f, index=False))
+
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)  # Release lock
 
         return jsonify({'status': 'success'})
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/close_session', methods=['POST'])
-def close_session():
-    """
-    Close database connection and checkpoint WAL when user leaves QA page.
-    Called via navigator.sendBeacon() on page unload to ensure WAL files
-    are properly cleaned up after rapid navigation.
-    """
-    db_path_str = session.get('db_path')
-    if db_path_str:
-        close_pooled_connection(db_path_str)
-    return jsonify({'status': 'success'})
-
-
-@app.route('/export_qa/<path:clicked_path>/<path:pipeline>', methods=['POST'])
-@require_qa_directory
-def export_qa(clicked_path, pipeline):
-    """
-    Export QA data to JSON and CSV files.
-    Called from both root.html (dataset selection) and montage.html (during QA).
-
-    Handles three scenarios:
-    1. SQLite exists: Export directly
-    2. Only JSON exists: Migrate to SQLite first, then export
-    3. Nothing exists: Create empty database first, then export
-    """
-    qa_directory = get_qa_directory()
-    bids_mode = session.get('bids_mode', False)
-    pipeline_path = Path(qa_directory) / clicked_path / pipeline
-    db_path = get_db_path(pipeline_path)
-
-    storage_format = detect_storage_format(pipeline_path)
-
-    try:
-        if storage_format == 'none':
-            # Get PNG files and create empty database first
-            pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
-            prefix = clicked_path + '/' + pipeline + '/'
-            pngs_files = [x[len(prefix):] for x in pngs]
-
-            # Validate BIDS compliance if in BIDS mode
-            if bids_mode:
-                compliant, non_compliant = validate_bids_compliance(pngs_files)
-                if non_compliant:
-                    return jsonify({
-                        'status': 'error',
-                        'message': f'{len(non_compliant)} files are not BIDS-compliant'
-                    }), 400
-
-            create_empty_database(pipeline_path, pngs_files, bids_mode)
-
-        elif storage_format == 'json':
-            # Migrate JSON to SQLite first
-            migrate_json_to_sqlite(pipeline_path, bids_mode)
-
-        # Export from database
-        export_all(db_path, pipeline_path, bids_mode)
-        return jsonify({'status': 'success', 'message': 'Exported QA.json and QA.csv'})
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-
-@app.route('/export_qa_direct', methods=['POST'])
-@require_qa_directory
-def export_qa_direct():
-    """
-    Export QA data for standard mode (no dataset/pipeline structure).
-    """
-    qa_directory = get_qa_directory()
-    bids_mode = session.get('bids_mode', False)
-    pipeline_path = Path(qa_directory)
-    db_path = get_db_path(pipeline_path)
-
-    storage_format = detect_storage_format(pipeline_path)
-
-    try:
-        if storage_format == 'none':
-            # Get PNG files and create empty database first
-            pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
-            pngs_files = pngs  # For direct mode, no prefix stripping needed
-            create_empty_database(pipeline_path, pngs_files, bids_mode)
-
-        elif storage_format == 'json':
-            # Migrate JSON to SQLite first
-            migrate_json_to_sqlite(pipeline_path, bids_mode)
-
-        # Export from database
-        export_all(db_path, pipeline_path, bids_mode)
-        return jsonify({'status': 'success', 'message': 'Exported QA.json and QA.csv'})
 
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500

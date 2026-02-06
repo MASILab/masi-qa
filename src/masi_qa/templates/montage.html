@@ -163,10 +163,6 @@
             color: #666;
             margin-right: 5px;
         }
-        .nav-buttons {
-            display: flex;
-            gap: 10px;
-        }
         .btn-back {
             padding: 10px 20px;
             background-color: #ff9800;
@@ -182,25 +178,6 @@
         }
         .btn-back:hover {
             background-color: #f57c00;
-        }
-        .btn-export {
-            padding: 10px 20px;
-            background-color: #2196f3;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .btn-export:hover {
-            background-color: #1976d2;
-        }
-        .btn-export:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
         }
 
         /* Navigation controls */
@@ -244,24 +221,14 @@
     <div class="nav-header">
         <div class="nav-path">
             <span class="nav-path-label">Current:</span>
-            {% if bids_mode %}
             <span class="nav-path-item">{{ clicked_path }}</span>
             <span class="nav-path-separator">/</span>
             <span class="nav-path-item">{{ pipeline }}</span>
-            {% else %}
-            <span class="nav-path-item">{{ qa_directory }}</span>
-            {% endif %}
         </div>
-        <div class="nav-buttons">
-            <button type="button" class="btn-export" onclick="exportQAData()">
-                <span>&#128190;</span>
-                <span>Export</span>
-            </button>
-            <button type="button" class="btn-back" onclick="saveAndGoBack()">
-                <span>&#8592;</span>
-                <span>Change Selection</span>
-            </button>
-        </div>
+        <button type="button" class="btn-back" onclick="saveAndGoBack()">
+            <span>&#8592;</span>
+            <span>Change Selection</span>
+        </button>
     </div>
 
     <div class="review-status-container">
@@ -313,28 +280,15 @@
             // imageName may contain subdirectory path (e.g., "subdir/image.png")
             // Encode each path component separately to preserve slashes
             const encodedImageName = imageName.split('/').map(encodeURIComponent).join('/');
-            if (bidsMode) {
-                // BIDS mode: use dataset/pipeline URL pattern
-                return `/datasets/${encodeURIComponent(clickedPath)}/${encodeURIComponent(pipeline)}/${encodedImageName}`;
-            } else {
-                // Standard mode: use direct /qa/ URL pattern
-                return `/qa/${encodedImageName}`;
-            }
+            return `/datasets/${encodeURIComponent(clickedPath)}/${encodeURIComponent(pipeline)}/${encodedImageName}`;
         }
 
         // Function to extract the image path relative to the pipeline folder
-        // For BIDS mode: imagePath is like "dataset/pipeline/subdir/image.png"
-        //   Returns "subdir/image.png" (the path relative to pipeline folder)
-        // For standard mode: imagePath is already relative to qa_directory
-        //   Returns the path as-is
+        // imagePath is like "dataset/pipeline/subdir/image.png"
+        // Returns "subdir/image.png" (the path relative to pipeline folder)
         function getRelativeImagePath(imagePath) {
-            if (bidsMode) {
-                const prefix = clickedPath + '/' + pipeline + '/';
-                return imagePath.startsWith(prefix) ? imagePath.slice(prefix.length) : imagePath.split('/').pop();
-            } else {
-                // Standard mode: imagePath is already relative to qa_directory
-                return imagePath;
-            }
+            const prefix = clickedPath + '/' + pipeline + '/';
+            return imagePath.startsWith(prefix) ? imagePath.slice(prefix.length) : imagePath.split('/').pop();
         }
 
         //function that preloads all images and initializes the montage
@@ -1077,67 +1031,10 @@
             initializeMontage();
         }
 
-        // Export function for the Export button
-        async function exportQAData() {
-            const exportBtn = document.querySelector('.btn-export');
-            if (exportBtn) {
-                exportBtn.disabled = true;
-                exportBtn.style.opacity = '0.6';
-                exportBtn.querySelector('span:last-child').textContent = 'Exporting...';
-            }
-
-            // Build the export URL
-            let url;
-            if (bidsMode) {
-                url = '/export_qa/' + encodeURIComponent(clickedPath) + '/' + encodeURIComponent(pipeline);
-            } else {
-                url = '/export_qa_direct';
-            }
-
-            try {
-                const response = await fetch(url, { method: 'POST' });
-                const result = await response.json();
-
-                if (result.status === 'success') {
-                    alert('Export successful! QA.json and QA.csv have been created/updated.');
-                } else {
-                    alert('Export failed: ' + result.message);
-                }
-            } catch (error) {
-                alert('Export failed: ' + error.message);
-            } finally {
-                if (exportBtn) {
-                    exportBtn.disabled = false;
-                    exportBtn.style.opacity = '1';
-                    exportBtn.querySelector('span:last-child').textContent = 'Export';
-                }
-            }
-        }
-
-        // Helper function to perform export (used by saveAndGoBack)
-        async function performExport() {
-            let url;
-            if (bidsMode) {
-                url = '/export_qa/' + encodeURIComponent(clickedPath) + '/' + encodeURIComponent(pipeline);
-            } else {
-                url = '/export_qa_direct';
-            }
-
-            try {
-                const response = await fetch(url, { method: 'POST' });
-                const result = await response.json();
-                console.log('Auto-export result:', result.status);
-                return result.status === 'success';
-            } catch (error) {
-                console.error('Auto-export failed:', error);
-                return false;
-            }
-        }
-
         // Flag to prevent double-clicks on "Change Selection" button
         let isSavingAndGoingBack = false;
 
-        // Function to save current QA state, auto-export, and navigate back to selection
+        // Function to save current QA state and navigate back to selection
         function saveAndGoBack() {
             // Prevent multiple clicks while save is in progress
             if (isSavingAndGoingBack) {
@@ -1197,18 +1094,11 @@
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
 
-            // Save to server using incremental save, auto-export, then redirect
+            // Save to server using incremental save, then redirect
             saveImageIncremental(imageName, qaDict)
-                .then(async success => {
+                .then(success => {
                     if (success) {
                         console.log('Saved QA Dictionary before leaving');
-                        // Update button to show exporting state
-                        const backButton = document.querySelector('.btn-back');
-                        if (backButton) {
-                            backButton.querySelector('span:last-child').textContent = 'Exporting...';
-                        }
-                        // Auto-export before leaving
-                        await performExport();
                         window.location.href = '/';
                     } else {
                         throw new Error('Incremental save failed');
@@ -1235,12 +1125,6 @@
             // as a wrapper for the handleKeyboardEvent function, allowing us to pass additional values like
             // bidsFields and qaDict (so they don't have to be retreived again in navigateImage)
         document.addEventListener('keydown', handleKeyboardEvent);
-
-        // Cleanup database connection when user leaves page
-        // Uses sendBeacon for reliable delivery even during page unload
-        window.addEventListener('beforeunload', function(e) {
-            navigator.sendBeacon('/close_session', '');
-        });
 
         // Initialize montage on page load
         preloadImagesAndInitialize();
