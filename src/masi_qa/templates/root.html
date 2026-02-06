@@ -35,10 +35,10 @@
             border-bottom: 1px solid #eee;
         }
 
-        /* Three-column layout */
+        /* Three-column layout (BIDS mode) / Single-column layout (Standard mode) */
         .selection-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: {% if bids_mode %}1fr 1fr 1fr{% else %}1fr{% endif %};
             gap: 15px;
             margin-bottom: 20px;
             height: 450px;
@@ -226,6 +226,42 @@
             cursor: not-allowed;
         }
 
+        /* Action buttons container */
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .action-buttons .btn-continue {
+            flex: 2;
+        }
+
+        /* Export button */
+        .btn-export {
+            background-color: #2196f3;
+            color: white;
+            font-size: 16px;
+            padding: 15px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .btn-export:hover {
+            background-color: #1976d2;
+        }
+        .btn-export:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .btn-export .icon {
+            font-size: 18px;
+        }
+
         /* Manual path input */
         .manual-input-section {
             margin-top: 15px;
@@ -336,17 +372,18 @@
             <p class="subtitle">
                 {% if bids_mode %}
                 <strong>BIDS Mode:</strong> Requires filenames like sub-XX_ses-YY_pipeline.png<br>
+                Browse to select a root directory, dataset, and pipeline, then enter your name to begin QA review.
                 {% else %}
                 <strong>Standard Mode:</strong> Any PNG filename format accepted<br>
+                Browse to select a directory containing PNG images, then enter your name to begin QA review.
                 {% endif %}
-                Browse to select a root directory, dataset, and pipeline, then enter your name to begin QA review.
             </p>
         </div>
 
         <div class="selection-grid">
             <!-- Root Directory Browser Column -->
             <div class="selection-column" id="rootColumn">
-                <div class="column-header" id="rootHeader">Root Directory</div>
+                <div class="column-header" id="rootHeader">{% if bids_mode %}Root Directory{% else %}QA Directory{% endif %}</div>
                 <div class="breadcrumb" id="breadcrumb">
                     <span class="loading">Loading...</span>
                 </div>
@@ -356,12 +393,13 @@
                 <div class="select-root-bar">
                     <button type="button" class="btn-select-root" onclick="selectCurrentAsRoot()">
                         <span class="icon">&#10004;</span>
-                        <span>Select This Directory as Root</span>
+                        <span>{% if bids_mode %}Select This Directory as Root{% else %}Select This Directory for QA{% endif %}</span>
                     </button>
                 </div>
             </div>
 
-            <!-- Datasets Column -->
+            {% if bids_mode %}
+            <!-- Datasets Column (BIDS mode only) -->
             <div class="selection-column" id="datasetColumn">
                 <div class="column-header" id="datasetHeader">Datasets</div>
                 <div class="item-list" id="datasetList">
@@ -369,13 +407,14 @@
                 </div>
             </div>
 
-            <!-- Pipelines Column -->
+            <!-- Pipelines Column (BIDS mode only) -->
             <div class="selection-column" id="pipelineColumn">
                 <div class="column-header" id="pipelineHeader">Pipelines</div>
                 <div class="item-list" id="pipelineList">
                     <div class="placeholder">Select a dataset first</div>
                 </div>
             </div>
+            {% endif %}
         </div>
 
         <!-- Selected Path Display -->
@@ -396,10 +435,16 @@
 
         </div>
 
-        <!-- Continue Button -->
-        <button type="button" class="btn-continue" id="continueBtn" disabled onclick="continueToQA()">
-            Continue to QA
-        </button>
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <button type="button" class="btn-continue" id="continueBtn" disabled onclick="continueToQA()">
+                Continue to QA
+            </button>
+            <button type="button" class="btn-export" id="exportBtn" disabled onclick="exportQAData()">
+                <span class="icon">&#128190;</span>
+                <span>Export JSON/CSV</span>
+            </button>
+        </div>
 
         <!-- Manual Path Input -->
         <div class="manual-input-section">
@@ -576,6 +621,7 @@
         }
 
         function resetSelections() {
+            const bidsMode = {{ bids_mode | tojson }};
             selectedRootPath = null;
             selectedDataset = null;
             selectedPipeline = null;
@@ -583,17 +629,20 @@
             // Reset column states
             document.getElementById('rootColumn').classList.remove('active');
             document.getElementById('rootHeader').classList.remove('active');
-            document.getElementById('rootHeader').textContent = 'Root Directory';
-            document.getElementById('datasetColumn').classList.remove('active');
-            document.getElementById('datasetHeader').classList.remove('active');
-            document.getElementById('datasetHeader').textContent = 'Datasets';
-            document.getElementById('pipelineColumn').classList.remove('active');
-            document.getElementById('pipelineHeader').classList.remove('active');
-            document.getElementById('pipelineHeader').textContent = 'Pipelines';
+            document.getElementById('rootHeader').textContent = bidsMode ? 'Root Directory' : 'QA Directory';
 
-            // Reset lists
-            document.getElementById('datasetList').innerHTML = '<div class="placeholder">Select a root directory first</div>';
-            document.getElementById('pipelineList').innerHTML = '<div class="placeholder">Select a dataset first</div>';
+            if (bidsMode) {
+                document.getElementById('datasetColumn').classList.remove('active');
+                document.getElementById('datasetHeader').classList.remove('active');
+                document.getElementById('datasetHeader').textContent = 'Datasets';
+                document.getElementById('pipelineColumn').classList.remove('active');
+                document.getElementById('pipelineHeader').classList.remove('active');
+                document.getElementById('pipelineHeader').textContent = 'Pipelines';
+
+                // Reset lists
+                document.getElementById('datasetList').innerHTML = '<div class="placeholder">Select a root directory first</div>';
+                document.getElementById('pipelineList').innerHTML = '<div class="placeholder">Select a dataset first</div>';
+            }
 
             // Update UI
             updateSelectedPath();
@@ -607,6 +656,7 @@
         }
 
         function selectRoot(path) {
+            const bidsMode = {{ bids_mode | tojson }};
             selectedRootPath = path;
             selectedDataset = null;
             selectedPipeline = null;
@@ -614,19 +664,22 @@
             // Update column states
             document.getElementById('rootColumn').classList.add('active');
             document.getElementById('rootHeader').classList.add('active');
-            document.getElementById('rootHeader').textContent = 'Root: ' + path.split('/').pop();
-            document.getElementById('datasetColumn').classList.remove('active');
-            document.getElementById('datasetHeader').classList.remove('active');
-            document.getElementById('datasetHeader').textContent = 'Datasets';
-            document.getElementById('pipelineColumn').classList.remove('active');
-            document.getElementById('pipelineHeader').classList.remove('active');
-            document.getElementById('pipelineHeader').textContent = 'Pipelines';
+            document.getElementById('rootHeader').textContent = (bidsMode ? 'Root: ' : 'Selected: ') + path.split('/').pop();
 
-            // Reset pipeline list
-            document.getElementById('pipelineList').innerHTML = '<div class="placeholder">Select a dataset first</div>';
+            if (bidsMode) {
+                document.getElementById('datasetColumn').classList.remove('active');
+                document.getElementById('datasetHeader').classList.remove('active');
+                document.getElementById('datasetHeader').textContent = 'Datasets';
+                document.getElementById('pipelineColumn').classList.remove('active');
+                document.getElementById('pipelineHeader').classList.remove('active');
+                document.getElementById('pipelineHeader').textContent = 'Pipelines';
 
-            // Load datasets
-            loadDatasets(path);
+                // Reset pipeline list
+                document.getElementById('pipelineList').innerHTML = '<div class="placeholder">Select a dataset first</div>';
+
+                // Load datasets
+                loadDatasets(path);
+            }
 
             // Update UI
             updateSelectedPath();
@@ -774,19 +827,24 @@
         function updateSelectedPath() {
             const selectedPath = document.getElementById('selectedPath');
             const selectedPathText = document.getElementById('selectedPathText');
+            const bidsMode = {{ bids_mode | tojson }};
 
             if (selectedRootPath) {
                 let pathText = selectedRootPath;
-                if (selectedDataset) {
-                    pathText += ' / ' + selectedDataset;
-                    if (selectedPipeline) {
-                        pathText += ' / ' + selectedPipeline;
+                if (bidsMode) {
+                    // BIDS mode: show full root/dataset/pipeline path
+                    if (selectedDataset) {
+                        pathText += ' / ' + selectedDataset;
+                        if (selectedPipeline) {
+                            pathText += ' / ' + selectedPipeline;
+                        } else {
+                            pathText += ' / (select a pipeline)';
+                        }
                     } else {
-                        pathText += ' / (select a pipeline)';
+                        pathText += ' / (select a dataset)';
                     }
-                } else {
-                    pathText += ' / (select a dataset)';
                 }
+                // Standard mode: just show the selected root path
                 selectedPathText.textContent = pathText;
                 selectedPath.classList.add('visible');
             } else {
@@ -816,13 +874,60 @@
 
         function updateContinueButton() {
             const continueBtn = document.getElementById('continueBtn');
+            const exportBtn = document.getElementById('exportBtn');
             const userName = document.getElementById('userName').value.trim();
-            // Require: reviewer name, root path, dataset, and pipeline
-            continueBtn.disabled = !(userName && selectedRootPath && selectedDataset && selectedPipeline);
+            const bidsMode = {{ bids_mode | tojson }};
+            if (bidsMode) {
+                // BIDS mode: require reviewer name, root path, dataset, and pipeline for Continue
+                continueBtn.disabled = !(userName && selectedRootPath && selectedDataset && selectedPipeline);
+                // Export only requires root, dataset, and pipeline (no reviewer name needed)
+                exportBtn.disabled = !(selectedRootPath && selectedDataset && selectedPipeline);
+            } else {
+                // Standard mode: only require reviewer name and root path for Continue
+                continueBtn.disabled = !(userName && selectedRootPath);
+                // Export only requires root path
+                exportBtn.disabled = !selectedRootPath;
+            }
+        }
+
+        async function exportQAData() {
+            const exportBtn = document.getElementById('exportBtn');
+            const originalHtml = exportBtn.innerHTML;
+            const bidsMode = {{ bids_mode | tojson }};
+
+            // Disable button and show loading state
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<span class="icon">&#8987;</span><span>Exporting...</span>';
+
+            // Build the export URL
+            let url;
+            if (bidsMode) {
+                url = '/export_qa/' + encodeURIComponent(selectedDataset) + '/' + encodeURIComponent(selectedPipeline);
+            } else {
+                url = '/export_qa_direct';
+            }
+
+            try {
+                const response = await fetch(url, { method: 'POST' });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    alert('Export successful! QA.json and QA.csv have been created/updated.');
+                } else {
+                    alert('Export failed: ' + result.message);
+                }
+            } catch (error) {
+                alert('Export failed: ' + error.message);
+            } finally {
+                // Restore button state
+                exportBtn.innerHTML = originalHtml;
+                updateContinueButton();
+            }
         }
 
         async function continueToQA() {
             const userName = document.getElementById('userName').value.trim();
+            const bidsMode = {{ bids_mode | tojson }};
 
             // Validate all required fields
             if (!userName) {
@@ -830,9 +935,16 @@
                 document.getElementById('userName').focus();
                 return;
             }
-            if (!selectedRootPath || !selectedDataset || !selectedPipeline) {
-                alert('Please select a root directory, dataset, and pipeline.');
-                return;
+            if (bidsMode) {
+                if (!selectedRootPath || !selectedDataset || !selectedPipeline) {
+                    alert('Please select a root directory, dataset, and pipeline.');
+                    return;
+                }
+            } else {
+                if (!selectedRootPath) {
+                    alert('Please select a directory containing PNG images.');
+                    return;
+                }
             }
 
             // Save QA settings to session first
@@ -854,7 +966,11 @@
             }
 
             // Navigate to QA page
-            window.location.href = '/datasets/' + encodeURIComponent(selectedDataset) + '/' + encodeURIComponent(selectedPipeline);
+            if (bidsMode) {
+                window.location.href = '/datasets/' + encodeURIComponent(selectedDataset) + '/' + encodeURIComponent(selectedPipeline);
+            } else {
+                window.location.href = '/qa';
+            }
         }
 
         function toggleManualInput() {
