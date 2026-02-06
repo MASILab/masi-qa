@@ -221,9 +221,13 @@
     <div class="nav-header">
         <div class="nav-path">
             <span class="nav-path-label">Current:</span>
+            {% if clicked_path and pipeline %}
             <span class="nav-path-item">{{ clicked_path }}</span>
             <span class="nav-path-separator">/</span>
             <span class="nav-path-item">{{ pipeline }}</span>
+            {% else %}
+            <span class="nav-path-item">Standard QA</span>
+            {% endif %}
         </div>
         <button type="button" class="btn-back" onclick="saveAndGoBack()">
             <span>&#8592;</span>
@@ -280,6 +284,10 @@
             // imageName may contain subdirectory path (e.g., "subdir/image.png")
             // Encode each path component separately to preserve slashes
             const encodedImageName = imageName.split('/').map(encodeURIComponent).join('/');
+            if (!clickedPath && !pipeline) {
+                // Standard mode: images served from /qa/
+                return `/qa/${encodedImageName}`;
+            }
             return `/datasets/${encodeURIComponent(clickedPath)}/${encodeURIComponent(pipeline)}/${encodedImageName}`;
         }
 
@@ -287,6 +295,10 @@
         // imagePath is like "dataset/pipeline/subdir/image.png"
         // Returns "subdir/image.png" (the path relative to pipeline folder)
         function getRelativeImagePath(imagePath) {
+            if (!clickedPath && !pipeline) {
+                // Standard mode: imagePath is already relative
+                return imagePath;
+            }
             const prefix = clickedPath + '/' + pipeline + '/';
             return imagePath.startsWith(prefix) ? imagePath.slice(prefix.length) : imagePath.split('/').pop();
         }
@@ -465,7 +477,7 @@
         function fetchImage(imagePath, imgElement) {
             // Fetch image path dynamically from Flask endpoint
             //console.log('Fetching image from URL:', imagePath);
-            fetch(`{{ url_for('serve_image', clicked_path=clicked_path, pipeline=pipeline, image_filename=imagePath) }}`)
+            fetch(constructImageUrl(clickedPath, pipeline, imagePath))
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('Network response was not ok');
@@ -982,16 +994,21 @@
             qaDict['QA_status'] = qaStatus;
             qaDict['reason'] = reasonInputValue;
 
-            // Fire-and-forget save (server-side locking prevents race conditions)
-            saveImageIncremental(imageName, qaDict)
-                .then(success => {
-                    if (success) {
-                        console.log('Incremental save successful');
-                    } else {
-                        console.warn('Incremental save failed');
-                    }
-                    updateAllReviewedBanner();
-                });
+            // Fire-and-forget save to server
+            fetch('/update_qa_dict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(nestedDict)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    console.warn('Save failed on jump to next unreviewed');
+                }
+                updateAllReviewedBanner();
+            })
+            .catch(error => {
+                console.error('Error saving QA state:', error);
+            });
 
             // Navigate to next unreviewed
             currentImageIndex = nextIndex;

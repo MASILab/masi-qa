@@ -1028,6 +1028,83 @@ def render_montage(clicked_path, pipeline):
 
 
 
+@app.route('/qa')
+@require_qa_directory
+def render_montage_standard():
+    """Standard (non-BIDS) mode: QA directory contains PNGs directly."""
+    qa_directory = get_qa_directory()
+    bids_mode = session.get('bids_mode', False)
+    user_name = session.get('user_name', '')
+
+    pipeline_path = Path(qa_directory)
+
+    # Check write permissions before proceeding
+    can_write, file_issues, files_missing = check_write_permissions(pipeline_path)
+    if not can_write:
+        return render_template('permission_error.html',
+                               clicked_path='',
+                               pipeline='',
+                               pipeline_path=str(pipeline_path),
+                               file_issues=file_issues,
+                               files_missing=files_missing)
+
+    pngs = sorted([str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')])
+
+    image_paths = list(pngs)
+    pngs_files = list(pngs)
+
+    # Check to see if the json file exists. If it doesn't, create it
+    json_path = pipeline_path / 'QA.json'
+    session['json_path'] = str(json_path)
+    session['bids_mode'] = bids_mode
+
+    if not json_path.exists():
+        print("Creating new QA session...")
+        json_dict = create_json_dict(pngs_files)
+        df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=False)
+        save_json_file(json_path, json_dict)
+    else:
+        with open(json_path, 'r') as f:
+            json_dict = json.load(f)
+
+        # Detect format mismatch
+        existing_format = detect_json_format(json_dict)
+        if existing_format != 'empty' and existing_format != 'unknown':
+            if existing_format == 'bids':
+                return render_template('mode_mismatch.html',
+                                       clicked_path='',
+                                       pipeline='',
+                                       selected_mode='flat',
+                                       existing_format=existing_format,
+                                       conversion_error=None)
+
+        # Validate existing data
+        paths, leaf_dicts = zip(*get_leaf_dicts(json_dict))
+        assert are_unique_qa_dicts(leaf_dicts), f"There are duplicate QA dictionaries in the json file {json_path}. Please correct before attempting QA."
+        assert_tags_in_dict(paths, leaf_dicts)
+        assert_valid_qa_status(leaf_dicts)
+        check_png_for_json(leaf_dicts, [str(x) for x in pngs_files])
+        json_dict = check_json_for_png(json_dict, pngs_files)
+
+    return render_template('montage.html',
+                           clicked_path='',
+                           pipeline='',
+                           image_paths=image_paths,
+                           json_dict=json_dict,
+                           bids_mode=bids_mode,
+                           user_name=user_name)
+
+@app.route('/qa/<path:image_filename>')
+@require_qa_directory
+def serve_image_standard(image_filename):
+    """Serve images in Standard mode directly from qa_directory."""
+    qa_directory = get_qa_directory()
+    image_path = os.path.join(qa_directory, image_filename)
+    if os.path.isfile(image_path):
+        return send_file(image_path, mimetype='image/png')
+    else:
+        return 'Image not found', 404
+
 @app.route('/datasets/<path:clicked_path>/<path:pipeline>/<path:image_filename>')
 @require_qa_directory
 def serve_image(clicked_path, pipeline, image_filename):
