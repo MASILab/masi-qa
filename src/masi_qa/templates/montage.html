@@ -32,26 +32,21 @@
         }
         .qa-buttons {
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            align-items: center;
             margin-top: 10px;
+            gap: 4px;
+        }
+        .qa-buttons-row {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
         }
         .qa-button {
-            margin: 0 5px;
+            margin: 0 2px;
             padding: 5px 10px;
             cursor: pointer;
             background-color: #ccc; /* Gray background by default */
-        }
-        .qa-button.active {
-            background-color: lightgreen; /* Green for Yes */
-        }
-        .qa-button.active.yes {
-            background-color: lightgreen; /* Green for Yes */
-        }
-        .qa-button.active.no {
-            background-color: tomato; /* Red for No */
-        }
-        .qa-button.active.maybe {
-            background-color: yellow; /* Yellow for Maybe */
         }
         .horizontal-line {
             width: 100%;
@@ -293,6 +288,11 @@
         let unreviewedIndices = []; // Sorted array of unreviewed image indices for O(1) navigation
         let needsDiskWrite = false;        // True when status/reason changes (conditions A/B)
         let allReviewedWriteDone = false;  // True after condition D write has fired (prevent re-posting)
+        const qaOptions = JSON.parse('{{ qa_options | tojson | safe }}');
+        const defaultStatus = qaOptions[0];
+        const QA_COLORS = ['lightgreen', 'tomato', 'yellow', '#6fa8dc', '#f6b26b', '#b4a7d6', '#76d7c4', '#f4cccc'];
+        const QA_SHORTCUT_KEYS = ['Q', 'W', 'E', 'R', 'A', 'S', 'D', 'F'];
+        const QA_SHORTCUT_CODES = ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyA', 'KeyS', 'KeyD', 'KeyF'];
 
         // Function to construct the image URL
         function constructImageUrl(clickedPath, pipeline, imageName) {
@@ -440,15 +440,22 @@
             const qaButtons = document.createElement('div');
             qaButtons.className = 'qa-buttons';
 
-            // Create QA buttons
-            //console.log('QA Status:', qaDict['QA_status']);
-            const yesButton = createQAButton('Yes', qaDict['QA_status'] == 'yes');
-            const noButton = createQAButton('No', qaDict['QA_status'] == 'no');
-            const maybeButton = createQAButton('Maybe', qaDict['QA_status'] == 'maybe');
+            // Create QA buttons dynamically from qaOptions, split into rows of 4
+            const row1 = document.createElement('div');
+            row1.className = 'qa-buttons-row';
+            const row2 = (qaOptions.length > 4) ? document.createElement('div') : null;
+            if (row2) row2.className = 'qa-buttons-row';
 
-            qaButtons.appendChild(yesButton);
-            qaButtons.appendChild(noButton);
-            qaButtons.appendChild(maybeButton);
+            qaOptions.forEach(function(opt, idx) {
+                const btn = createQAButton(opt, qaDict['QA_status'] == opt.toLowerCase(), idx);
+                if (idx < 4) {
+                    row1.appendChild(btn);
+                } else {
+                    row2.appendChild(btn);
+                }
+            });
+            qaButtons.appendChild(row1);
+            if (row2) qaButtons.appendChild(row2);
             imageContainer.appendChild(qaButtons);
 
             // Reason input box
@@ -519,24 +526,28 @@
         }
 
         // Function to create a QA button
-        function createQAButton(status, isActive) {
+        function createQAButton(status, isActive, index) {
             const button = document.createElement('button');
-            button.className = `qa-button ${status.toLowerCase()}`;
+            button.className = 'qa-button';
             button.dataset.qaStatus = status.toLowerCase();
+            button.dataset.colorIndex = index;
             // Add keyboard shortcut hints to button labels
-            const shortcuts = {'Yes': 'Q', 'No': 'W', 'Maybe': 'E'};
-            const shortcut = shortcuts[status];
-            button.textContent = shortcut ? `${status} (${shortcut})` : status;
-            if (isActive) { 
+            const shortcut = QA_SHORTCUT_KEYS[index];
+            const displayName = status.charAt(0).toUpperCase() + status.slice(1);
+            button.textContent = shortcut ? `${displayName} (${shortcut})` : displayName;
+            if (isActive) {
                 button.classList.add('active');
+                button.style.backgroundColor = QA_COLORS[index] || '#ccc';
             }
             button.addEventListener('click', function() {
                 // Remove active class from all buttons
                 document.querySelectorAll('.qa-button').forEach(btn => {
                     btn.classList.remove('active');
+                    btn.style.backgroundColor = '#ccc';
                 });
                 // Highlight button (i.e. set the active status for this button)
                 button.classList.add('active');
+                button.style.backgroundColor = QA_COLORS[index] || '#ccc';
                 needsDiskWrite = true;  // Condition A: status changed
             });
             return button;
@@ -558,9 +569,12 @@
         function setButtonActive(button) {
             document.querySelectorAll('.qa-button').forEach(btn => {
                 btn.classList.remove('active');
+                btn.style.backgroundColor = '#ccc';
             });
             // Highlight button (i.e. set the active status for this button)
             button.classList.add('active');
+            const colorIdx = parseInt(button.dataset.colorIndex) || 0;
+            button.style.backgroundColor = QA_COLORS[colorIdx] || '#ccc';
         }
 
         // Function to handle keyboard events
@@ -599,29 +613,18 @@
                     case 'Space':
                         toggleLoop(); // Toggle looping on spacebar press
                         break;
-                    // TODO: Keyboard shortcuts for QA buttons
-                    case 'KeyQ':
-                        button = findButtonByStatus('yes');
-                        if (button) {
-                            button.click();
-                        }
-                        break;
-                    case 'KeyW':
-                        button = findButtonByStatus('no');
-                        if (button) {
-                            button.click();
-                        }
-                        break;
-                    case 'KeyE':
-                        button = findButtonByStatus('maybe');
-                        if (button) {
-                            button.click();
-                        }
-                        break;
                     case 'KeyN':
                         jumpToNextUnreviewed();
                         break;
                     default:
+                        // Dynamic keyboard shortcuts for QA buttons
+                        var shortcutIdx = QA_SHORTCUT_CODES.indexOf(event.code);
+                        if (shortcutIdx !== -1 && shortcutIdx < qaOptions.length) {
+                            button = findButtonByStatus(qaOptions[shortcutIdx].toLowerCase());
+                            if (button) {
+                                button.click();
+                            }
+                        }
                         break;
                 }
             }
@@ -778,7 +781,7 @@
         function captureCurrentImageState() {
             const qaButtons = document.querySelectorAll('.qa-button');
             const activeButton = Array.from(qaButtons).find(btn => btn.classList.contains('active'));
-            const qaStatus = activeButton ? activeButton.dataset.qaStatus : 'yes';
+            const qaStatus = activeButton ? activeButton.dataset.qaStatus : defaultStatus;
             const reasonInputValue = document.querySelector('.reason-input')?.value || '';
 
             const imagePath = imagePaths[currentImageIndex];

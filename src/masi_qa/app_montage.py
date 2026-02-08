@@ -204,18 +204,18 @@ def validate_bids_compliance(pngs):
             non_compliant.append(png)
     return compliant, non_compliant
 
-def create_json_dict(filepaths):
+def create_json_dict(filepaths, default_status='yes'):
     """
     Given a list of filenames, create the flat json dictionary (non-BIDS mode).
     """
     nested_d = {}
     for png in tqdm(filepaths):
-        row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'user': '', 'date': '', 'duration': 0}
+        row = {'filename': str(png), 'QA_status': default_status, 'reason': '', 'user': '', 'date': '', 'duration': 0}
         nested_d[png] = row
     return nested_d
 
 
-def create_bids_json_dict(filepaths):
+def create_bids_json_dict(filepaths, default_status='yes'):
     """
     Given a list of BIDS-compliant filenames, create the nested BIDS json dictionary.
     Structure: sub -> ses -> acq -> run -> leaf dict
@@ -232,7 +232,7 @@ def create_bids_json_dict(filepaths):
                 current_d = current_d.setdefault(tag, {})
         # Set the default values
         row = {
-            'QA_status': 'yes',
+            'QA_status': default_status,
             'reason': '',
             'user': '',
             'date': '',
@@ -504,7 +504,7 @@ def check_png_for_json(dicts, pngs):
                     png += ".png"
                     assert png in pngs, f"PNG {png} from {dic} not in list of pngs"
 
-def check_json_for_png(nested, pngs):
+def check_json_for_png(nested, pngs, default_status='yes'):
     """
     Given a flat json and list of pngs, make sure that every single png file has a corresponding json entry.
     If it does not, then add the default values to the json file.
@@ -513,12 +513,12 @@ def check_json_for_png(nested, pngs):
     keys = nested.keys()
     for png in pngs:
         if png not in keys:
-            row = {'filename': str(png), 'QA_status': 'yes', 'reason': '', 'user': '', 'date': '', 'duration': 0}
+            row = {'filename': str(png), 'QA_status': default_status, 'reason': '', 'user': '', 'date': '', 'duration': 0}
             nested[png] = row
     return nested
 
 
-def check_json_for_png_bids(nested, pngs):
+def check_json_for_png_bids(nested, pngs, default_status='yes'):
     """
     Given a nested BIDS json and list of pngs, make sure that every single png file has a corresponding json entry.
     If it does not, then add the default values to the json file.
@@ -540,7 +540,7 @@ def check_json_for_png_bids(nested, pngs):
         # If current_d is empty (new entry), add the default values
         if not current_d or 'QA_status' not in current_d:
             row = {
-                'QA_status': 'yes',
+                'QA_status': default_status,
                 'reason': '',
                 'user': '',
                 'date': '',
@@ -552,15 +552,29 @@ def check_json_for_png_bids(nested, pngs):
             current_d.update(row)
     return nested
 
-def assert_valid_qa_status(dict_list):
+def assert_valid_qa_status(dict_list, valid_statuses=None):
     """
-    Given a list of QA dictionaries, assert that the QA status is either 'yes', 'no', or 'maybe' for all
+    Given a list of QA dictionaries, assert that the QA status is valid for all.
+    valid_statuses defaults to ['yes', 'no', 'maybe'] if not provided.
     """
-
-    valid_statuses = ['yes', 'no', 'maybe']
+    if valid_statuses is None:
+        valid_statuses = ['yes', 'no', 'maybe']
 
     for d in dict_list:
         assert d['QA_status'] in valid_statuses, f"QA status {d['QA_status']} is not valid for dictionary {d}"
+
+
+def check_qa_status_mismatch(dict_list, valid_statuses):
+    """
+    Check if any existing QA_status values are not in the configured options.
+    Returns a list of unrecognized status values, or empty list if all valid.
+    """
+    unrecognized = set()
+    for d in dict_list:
+        status = d.get('QA_status', '')
+        if status and status not in valid_statuses:
+            unrecognized.add(status)
+    return sorted(unrecognized)
 
 
 def detect_json_format(json_dict):
@@ -771,13 +785,38 @@ def validate_path_route():
 
 @app.route('/set-options', methods=['POST'])
 def set_options():
-    """AJAX endpoint to set QA session options (user name)."""
+    """AJAX endpoint to set QA session options (user name, custom QA options)."""
     data = request.get_json()
     # BIDS mode is determined by which entry point was used (masi-qa vs masi-bids-qa)
     # We ignore any bids_mode sent from client and use the global setting
     session['bids_mode'] = BIDS_MODE
     session['user_name'] = data.get('user_name', '').strip()
-    return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name']})
+
+    # Custom QA options (list of status labels)
+    qa_options = data.get('qa_options', None)
+    if qa_options and isinstance(qa_options, list):
+        # Lowercase, strip whitespace, remove empties
+        qa_options = [opt.strip().lower() for opt in qa_options if opt.strip()]
+        # Validate: 2-8 unique options
+        if len(qa_options) < 2:
+            qa_options = ['yes', 'no', 'maybe']
+        elif len(qa_options) > 8:
+            qa_options = qa_options[:8]
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_options = []
+        for opt in qa_options:
+            if opt not in seen:
+                seen.add(opt)
+                unique_options.append(opt)
+            if len(unique_options) < 2:
+                pass  # will fall through to default below
+        qa_options = unique_options if len(unique_options) >= 2 else ['yes', 'no', 'maybe']
+    else:
+        qa_options = ['yes', 'no', 'maybe']
+
+    session['qa_options'] = qa_options
+    return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name'], 'qa_options': session['qa_options']})
 
 
 @app.route('/convert-qa-format/<path:clicked_path>/<path:pipeline>', methods=['POST'])
@@ -903,7 +942,8 @@ def index():
     session['bids_mode'] = BIDS_MODE
     # Get previously entered user name from session (if any)
     user_name = session.get('user_name', '')
-    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE, user_name=user_name)
+    qa_options = session.get('qa_options', ['yes', 'no', 'maybe'])
+    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE, user_name=user_name, qa_options=qa_options)
 
 @app.route('/datasets', methods=['POST'])
 @require_qa_directory
@@ -973,12 +1013,15 @@ def render_montage(clicked_path, pipeline):
     session['json_path'] = str(json_path)
     session['bids_mode'] = bids_mode  # Store for update_qa_dict
 
+    qa_options = session.get('qa_options', ['yes', 'no', 'maybe'])
+    default_status = qa_options[0]
+
     if not json_path.exists():
         print("Creating new QA session...")
         if bids_mode:
-            json_dict = create_bids_json_dict(pngs_files)
+            json_dict = create_bids_json_dict(pngs_files, default_status=default_status)
         else:
-            json_dict = create_json_dict(pngs_files)
+            json_dict = create_json_dict(pngs_files, default_status=default_status)
         df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=bids_mode)
         save_json_file(json_path, json_dict)
         # Set permissions on newly created files
@@ -1016,17 +1059,26 @@ def render_montage(clicked_path, pipeline):
         # Check to make sure that the paths to the json dictionaries are correct
         assert_tags_in_dict(paths, leaf_dicts)
 
-        # Check to make sure that the QA status is either 'yes', 'no', or 'maybe'
-        assert_valid_qa_status(leaf_dicts)
+        # Check if existing QA_status values are compatible with configured options
+        qa_options = session.get('qa_options', ['yes', 'no', 'maybe'])
+        unrecognized = check_qa_status_mismatch(leaf_dicts, qa_options)
+        if unrecognized:
+            return render_template('status_mismatch.html',
+                                   clicked_path=clicked_path,
+                                   pipeline=pipeline,
+                                   qa_options=qa_options,
+                                   unrecognized_statuses=unrecognized)
+
+        assert_valid_qa_status(leaf_dicts, valid_statuses=qa_options)
 
         # Check to make sure that every json entry has a corresponding png file
         check_png_for_json(leaf_dicts, [str(x) for x in pngs_files])
 
         # If the png does not have a corresponding json entry, it needs to be added
         if bids_mode:
-            json_dict = check_json_for_png_bids(json_dict, pngs_files)
+            json_dict = check_json_for_png_bids(json_dict, pngs_files, default_status=default_status)
         else:
-            json_dict = check_json_for_png(json_dict, pngs_files)
+            json_dict = check_json_for_png(json_dict, pngs_files, default_status=default_status)
 
     return render_template('montage.html',
                            clicked_path=clicked_path,
@@ -1034,7 +1086,9 @@ def render_montage(clicked_path, pipeline):
                            image_paths=image_paths,
                            json_dict=json_dict,
                            bids_mode=bids_mode,
-                           user_name=user_name)
+                           user_name=user_name,
+                           qa_options=qa_options,
+                           default_status=default_status)
 
     #maybe assert the following python functions:
 
@@ -1094,9 +1148,12 @@ def render_montage_standard():
     session['json_path'] = str(json_path)
     session['bids_mode'] = bids_mode
 
+    qa_options = session.get('qa_options', ['yes', 'no', 'maybe'])
+    default_status = qa_options[0]
+
     if not json_path.exists():
         print("Creating new QA session...")
-        json_dict = create_json_dict(pngs_files)
+        json_dict = create_json_dict(pngs_files, default_status=default_status)
         df = convert_json_to_csv(json_dict, pipeline_path, bids_mode=False)
         save_json_file(json_path, json_dict)
         # Set permissions on newly created files
@@ -1121,9 +1178,19 @@ def render_montage_standard():
         paths, leaf_dicts = zip(*get_leaf_dicts(json_dict))
         assert are_unique_qa_dicts(leaf_dicts), f"There are duplicate QA dictionaries in the json file {json_path}. Please correct before attempting QA."
         assert_tags_in_dict(paths, leaf_dicts)
-        assert_valid_qa_status(leaf_dicts)
+
+        # Check if existing QA_status values are compatible with configured options
+        unrecognized = check_qa_status_mismatch(leaf_dicts, qa_options)
+        if unrecognized:
+            return render_template('status_mismatch.html',
+                                   clicked_path='',
+                                   pipeline='',
+                                   qa_options=qa_options,
+                                   unrecognized_statuses=unrecognized)
+
+        assert_valid_qa_status(leaf_dicts, valid_statuses=qa_options)
         check_png_for_json(leaf_dicts, [str(x) for x in pngs_files])
-        json_dict = check_json_for_png(json_dict, pngs_files)
+        json_dict = check_json_for_png(json_dict, pngs_files, default_status=default_status)
 
     return render_template('montage.html',
                            clicked_path='',
@@ -1131,7 +1198,9 @@ def render_montage_standard():
                            image_paths=image_paths,
                            json_dict=json_dict,
                            bids_mode=bids_mode,
-                           user_name=user_name)
+                           user_name=user_name,
+                           qa_options=qa_options,
+                           default_status=default_status)
 
 @app.route('/qa/<path:image_filename>')
 @require_qa_directory

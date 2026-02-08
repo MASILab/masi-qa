@@ -327,6 +327,130 @@
             color: #c62828;
             margin-left: 3px;
         }
+
+        /* Collapsible QA Options Panel */
+        .qa-options-toggle {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: #1976d2;
+            font-size: 14px;
+            margin-top: 15px;
+            user-select: none;
+            gap: 6px;
+        }
+        .qa-options-toggle:hover {
+            color: #0d47a1;
+        }
+        .qa-options-toggle .arrow {
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+        .qa-options-toggle .arrow.open {
+            transform: rotate(90deg);
+        }
+        .qa-options-panel {
+            display: none;
+            margin-top: 10px;
+            padding: 15px;
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+        }
+        .qa-options-panel.open {
+            display: block;
+        }
+        .qa-option-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .qa-option-num {
+            width: 20px;
+            color: #888;
+            font-size: 13px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .qa-option-input {
+            flex: 1;
+            max-width: 200px;
+            padding: 6px 10px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .qa-option-input:focus {
+            border-color: #1976d2;
+            outline: none;
+        }
+        .qa-option-shortcut {
+            font-size: 12px;
+            color: #888;
+            background: #e8e8e8;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-family: monospace;
+            min-width: 16px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .qa-option-default {
+            font-size: 11px;
+            color: #4caf50;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .qa-option-remove {
+            background: none;
+            border: none;
+            color: #999;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+        .qa-option-remove:hover {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .qa-option-remove:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .qa-option-remove:disabled:hover {
+            background: none;
+            color: #999;
+        }
+        .qa-options-actions {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .btn-add-option {
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            color: #1565c0;
+            padding: 5px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .btn-add-option:hover {
+            background: #bbdefb;
+        }
+        .btn-add-option:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .qa-options-count {
+            font-size: 12px;
+            color: #888;
+        }
     </style>
 </head>
 <body>
@@ -397,6 +521,19 @@
                 <input type="text" id="userName" placeholder="Enter your name (required)" value="{{ user_name or '' }}" oninput="updateSettingsState()">
             </div>
 
+            <!-- Collapsible QA Options Panel -->
+            <div class="qa-options-toggle" onclick="toggleQAOptionsPanel()">
+                <span class="arrow" id="qaOptionsArrow">&#9654;</span>
+                <span>Customize QA Options (Advanced)</span>
+            </div>
+            <div class="qa-options-panel" id="qaOptionsPanel">
+                <div id="qaOptionsList"></div>
+                <div class="qa-options-actions">
+                    <button type="button" class="btn-add-option" id="btnAddOption" onclick="addQAOption()">+ Add Option</button>
+                    <span class="qa-options-count" id="qaOptionsCount"></span>
+                </div>
+            </div>
+
         </div>
 
         <!-- Continue Button -->
@@ -422,8 +559,106 @@
         let selectedDataset = null;
         let selectedPipeline = null;
 
+        // QA Options management
+        const QA_SHORTCUTS = ['Q', 'W', 'E', 'R', 'A', 'S', 'D', 'F'];
+        const QA_MIN_OPTIONS = 2;
+        const QA_MAX_OPTIONS = 8;
+        let qaOptions = JSON.parse('{{ qa_options | tojson | safe }}');
+
+        function toggleQAOptionsPanel() {
+            const panel = document.getElementById('qaOptionsPanel');
+            const arrow = document.getElementById('qaOptionsArrow');
+            panel.classList.toggle('open');
+            arrow.classList.toggle('open');
+        }
+
+        function renderQAOptions() {
+            const list = document.getElementById('qaOptionsList');
+            list.innerHTML = '';
+            qaOptions.forEach(function(opt, i) {
+                const row = document.createElement('div');
+                row.className = 'qa-option-row';
+
+                const num = document.createElement('span');
+                num.className = 'qa-option-num';
+                num.textContent = (i + 1) + '.';
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'qa-option-input';
+                input.value = opt;
+                input.placeholder = 'Option label';
+                input.dataset.index = i;
+                input.addEventListener('input', function() {
+                    qaOptions[i] = this.value;
+                });
+
+                const shortcut = document.createElement('span');
+                shortcut.className = 'qa-option-shortcut';
+                shortcut.textContent = QA_SHORTCUTS[i];
+
+                row.appendChild(num);
+                row.appendChild(input);
+                row.appendChild(shortcut);
+
+                if (i === 0) {
+                    const defaultLabel = document.createElement('span');
+                    defaultLabel.className = 'qa-option-default';
+                    defaultLabel.textContent = '(Default)';
+                    defaultLabel.title = 'New/unreviewed images will be assigned this status';
+                    row.appendChild(defaultLabel);
+                }
+
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'qa-option-remove';
+                removeBtn.innerHTML = '&times;';
+                removeBtn.title = 'Remove option';
+                removeBtn.disabled = qaOptions.length <= QA_MIN_OPTIONS;
+                removeBtn.addEventListener('click', function() {
+                    removeQAOption(i);
+                });
+                row.appendChild(removeBtn);
+
+                list.appendChild(row);
+            });
+            updateQAOptionsUI();
+        }
+
+        function addQAOption() {
+            if (qaOptions.length >= QA_MAX_OPTIONS) return;
+            qaOptions.push('');
+            renderQAOptions();
+            // Focus the new input
+            const inputs = document.querySelectorAll('.qa-option-input');
+            if (inputs.length > 0) inputs[inputs.length - 1].focus();
+        }
+
+        function removeQAOption(index) {
+            if (qaOptions.length <= QA_MIN_OPTIONS) return;
+            qaOptions.splice(index, 1);
+            renderQAOptions();
+        }
+
+        function updateQAOptionsUI() {
+            const addBtn = document.getElementById('btnAddOption');
+            const countSpan = document.getElementById('qaOptionsCount');
+            addBtn.disabled = qaOptions.length >= QA_MAX_OPTIONS;
+            countSpan.textContent = qaOptions.length + '/' + QA_MAX_OPTIONS + ' options';
+        }
+
+        function getValidQAOptions() {
+            // Return trimmed, non-empty, lowercased options
+            return qaOptions
+                .map(function(opt) { return opt.trim().toLowerCase(); })
+                .filter(function(opt) { return opt.length > 0; });
+        }
+
         // Initialize - start from home directory or session directory
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize QA options panel
+            renderQAOptions();
+
             // Initialize settings state
             updateSettingsState();
 
@@ -865,6 +1100,19 @@
                 }
             }
 
+            // Validate QA options
+            const validOptions = getValidQAOptions();
+            if (validOptions.length < QA_MIN_OPTIONS) {
+                alert('Please configure at least ' + QA_MIN_OPTIONS + ' non-empty QA options.');
+                return;
+            }
+            // Check for duplicates
+            const uniqueCheck = new Set(validOptions);
+            if (uniqueCheck.size !== validOptions.length) {
+                alert('QA options must be unique. Please remove duplicate labels.');
+                return;
+            }
+
             // Save QA settings to session first
             // Note: BIDS mode is determined by which command was used (masi-qa vs masi-bids-qa)
             try {
@@ -872,7 +1120,8 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        user_name: userName
+                        user_name: userName,
+                        qa_options: validOptions
                     })
                 });
 
