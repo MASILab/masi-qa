@@ -193,18 +193,18 @@ chmod g+w "{{ pipeline_path }}"</div>
             {% else %}
             <p><strong>Option 1:</strong> Grant write permission to the QA files:</p>
             <div class="command-box"><span class="comment"># Add write permission for your user</span>
-{% for file_info in file_issues %}chmod u+w "{{ pipeline_path }}/{{ file_info.name }}"
+{% for file_info in file_issues %}chmod u+w "{% if file_info.name == 'Directory' %}{{ pipeline_path }}{% else %}{{ pipeline_path }}/{{ file_info.name }}{% endif %}"
 {% endfor %}</div>
 
             <p><strong>Option 2:</strong> If you need group write access:</p>
             <div class="command-box"><span class="comment"># Add write permission for group</span>
-{% for file_info in file_issues %}chmod g+w "{{ pipeline_path }}/{{ file_info.name }}"
+{% for file_info in file_issues %}chmod g+w "{% if file_info.name == 'Directory' %}{{ pipeline_path }}{% else %}{{ pipeline_path }}/{{ file_info.name }}{% endif %}"
 {% endfor %}</div>
             {% endif %}
 
             <p><strong>Option 3:</strong> Change ownership (requires sudo):</p>
             <div class="command-box"><span class="comment"># Change owner to your user</span>
-sudo chown $(whoami) "{{ pipeline_path }}"{% if not files_missing %}{% for file_info in file_issues %} "{{ pipeline_path }}/{{ file_info.name }}"{% endfor %}{% endif %}</div>
+sudo chown $(whoami){% if files_missing %} "{{ pipeline_path }}"{% else %}{% for file_info in file_issues %} "{% if file_info.name == 'Directory' %}{{ pipeline_path }}{% else %}{{ pipeline_path }}/{{ file_info.name }}{% endif %}"{% endfor %}{% endif %}</div>
         </div>
 
         <div class="btn-group">
