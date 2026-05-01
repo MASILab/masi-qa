@@ -2,7 +2,7 @@
 
 A Flask-based web application for reviewing and annotating medical QA images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data.
 
-Supports both Standard and BIDS-compliant modes. For BIDS-only workflows, see [ADSP_AutoQA](https://github.com/MASILab/ADSP_AutoQA).
+Supports both Standard and BIDS-compliant modes.
 
 If you use this for your research, please cite the following paper:
 
@@ -12,13 +12,13 @@ Kim, Michael E., et al. "Scalable quality control on processing of large diffusi
 
 - Web-based image viewer for PNG files
 - Keyboard-driven workflow for fast QA review
-- Three-state QA classification: Yes, No, Maybe
+- Configurable QA status options (2–8 labels, default: Yes, No, Maybe)
 - Optional reason field for documenting QA decisions
 - Reviewer name tracking for multi-user workflows
 - BIDS compliance mode via separate `masi-bids-qa` command
 - Automatic tracking of review timestamps and duration
 - Persistent storage via JSON with CSV export
-- Autoplay mode for rapid image cycling
+- Autoplay mode with adjustable speed (50–500 ms per image)
 - Quick navigation: jump to specific image or next unreviewed
 - Completion notification when all images have been reviewed
 
@@ -59,9 +59,7 @@ pip install .
 | Key | Action |
 |-----|--------|
 | `←` / `→` | Navigate between images |
-| `Q` | Mark as "Yes" (pass) |
-| `W` | Mark as "No" (fail) |
-| `E` | Mark as "Maybe" (uncertain) |
+| `Q` / `W` / `E` ... | Set QA status (first 8 options mapped to Q, W, E, R, A, S, D, F) |
 | `N` | Jump to next unreviewed image |
 | `Space` | Toggle autoplay mode |
 | `Enter` | Focus/unfocus reason input field |
@@ -71,6 +69,22 @@ pip install .
 - **Go to specific image**: Use the "Go to #" input field next to the image counter and press Enter
 - **Next unreviewed**: Press `N` to skip already-reviewed images and jump to the next one that hasn't been reviewed yet
 - **Completion notification**: A green toast notification appears when all images have been reviewed. This triggers automatically when you review the last unreviewed image, when you press `N` with no unreviewed images remaining, or when you open a dataset where all images were already reviewed
+
+### Autoplay
+
+Press `Space` to start/stop autoplay. Use the **Speed** slider in the toolbar to set the delay per image (50–500 ms, default 250 ms).
+
+### Configurable QA Options
+
+On the dataset selection page, expand **QA Options** to customize the status labels shown during review. You can:
+
+- Rename any option (e.g. change "maybe" to "exclude")
+- Add options (up to 8 total)
+- Remove options (minimum 2 required)
+
+Keyboard shortcuts are assigned automatically in order: `Q`, `W`, `E`, `R`, `A`, `S`, `D`, `F`. The first option is the default status assigned to new images.
+
+The default options are **yes**, **no**, **maybe**.
 
 ## Expected Directory Structure
 
@@ -162,7 +176,7 @@ QA results are stored in `QA.json` and exported to `QA.csv`. The format depends 
 |-------|-------------|
 | `filename` | Name of the image file (Standard mode only) |
 | `sub/ses/acq/run` | BIDS identifiers (BIDS mode only) |
-| `QA_status` | Review status: `yes`, `no`, or `maybe` |
+| `QA_status` | Review status; one of the configured QA options (default: `yes`, `no`, `maybe`) |
 | `reason` | Optional text explaining the QA decision |
 | `user` | Name of the reviewer (empty until reviewed) |
 | `date` | Timestamp of the last review (empty until reviewed) |
