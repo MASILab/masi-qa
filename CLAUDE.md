@@ -1,33 +1,6 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 masi-qa is a Flask-based web application for reviewing and annotating medical images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data. Supports both BIDS-agnostic and BIDS-compliant modes.
-
-**Citation:** Kim, Michael E., et al. "Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets." PLOS One (2025).
-
-**Related:** BIDS-specific version at `https://github.com/MASILab/ADSP_AutoQA`
-
-## Running the Application
-
-```bash
-masi-qa [--debug]
-```
-
-- `--debug`: Enable Flask debug mode with hot reload
-
-Access at http://localhost:5000 (or http://0.0.0.0:5000 for Docker/external access)
-
-## Dependencies
-
-Install via: `pip install masi-qa`
-
-- Flask 2.2.2
-- pandas 2.0.3
-- tqdm
-- Werkzeug 2.2.2
 
 ## Architecture
 
@@ -41,6 +14,7 @@ Install via: `pip install masi-qa`
 - `root.html`: Initial dataset selection with QA settings (reviewer name, BIDS mode)
 - `bids_errors.html`: Error page showing non-BIDS-compliant files
 - `mode_mismatch.html`: Error page when selected mode doesn't match existing QA data format
+- `permission_error.html`: Error page when QA files cannot be written; shows per-file ownership/mode info and context-aware fix commands
 
 **Data Flow:**
 1. User selects root directory → dataset → pipeline, then enters reviewer name
@@ -68,79 +42,38 @@ The dataset selection page includes two settings:
 - Conversion creates a backup (`QA.json.backup`) before modifying
 - Converting flat→BIDS requires all filenames to be BIDS-compliant
 
-**QA.json Entry Structure (Non-BIDS Mode):**
-```json
-{
-  "filename.png": {
-    "filename": "filename.png",
-    "QA_status": "yes",
-    "reason": "",
-    "user": "",
-    "date": "2024-07-10 00:09:13",
-    "duration": 45
-  }
-}
-```
+## Permission Error Handling
 
-**QA.json Entry Structure (BIDS Mode):**
-```json
-{
-  "sub-001": {
-    "ses-01": {
-      "QA_status": "yes",
-      "reason": "",
-      "user": "",
-      "date": "2024-07-10 00:09:13",
-      "sub": "sub-001",
-      "ses": "ses-01",
-      "acq": "",
-      "run": ""
-    }
-  }
-}
-```
+When the app cannot write QA files, it shows `permission_error.html` with context about each affected file and context-aware fix commands.
 
-- `date`: Timestamp when user last reviewed the image (empty until reviewed)
-- `user`: Name of reviewer who last reviewed the image (empty until reviewed)
-- `duration`: Total seconds spent viewing the image (non-BIDS mode only)
+**Detection** (`app_montage.py: check_write_permissions`):
+- Checks directory write access (needed for `.QA.lock`)
+- Checks `QA.json` and `QA.csv` write access if they exist
+- Checks that existing files have mode `0o770`; auto-fixes silently if current user is the owner, otherwise reports as `wrong-permissions`
 
-## Expected Directory Structure
+**Per-issue metadata** (stored in `file_issues` list):
+- `name`, `full_path`, `status`, `message` — what the problem is
+- `owner`, `group`, `mode_octal`, `mode_symbolic` — current file state
+- `user_is_owner`, `user_in_group`, `group_has_write` — current user's relationship to the file
 
-```
-/qa/directory/
-├── dataset1/
-│   └── pipeline1/
-│       ├── image1.png
-│       ├── QA.json (auto-created)
-│       └── QA.csv (auto-created)
-```
+**Context-aware fix commands** (template groups issues by relationship):
 
-## Keyboard Shortcuts (montage.html)
+| Relationship | Fix shown |
+|---|---|
+| User owns the file | `chmod u+w "path"` (no sudo) |
+| User is in the file's group, g-w not set | `sudo chmod g+w "path"` |
+| User has no relationship | `sudo chown $(whoami) "path"` (primary) |
+| User has no relationship, g+w already set | Also offers `sudo chgrp $(id -gn) "path"` (preserves original owner) |
+| Wrong permissions, not owner | `sudo chmod 770 "path"` |
 
-- Arrow Left/Right: Navigate images (one at a time)
-- Q: Mark "Yes"
-- W: Mark "No"
-- E: Mark "Maybe"
-- N: Jump to next unreviewed image
-- Space: Toggle autoplay
-- Enter: Focus/unfocus reason input
-
-**Quick Navigation:**
-- Use the "Go to #" input field to jump directly to a specific image number
-- Press N to skip reviewed images and jump to the next unreviewed one
-
-## Important Operational Notes
-
-- **Use Chrome**: The app runs significantly faster in Chrome; Firefox is slow and jittery
-- **No concurrent users**: Do not have multiple people QAing the same dataset/pipeline simultaneously. The CSV is only read at startup; updates are not detected until the app restarts
-- **Large directories**: Directories with many QA images take time to preload. Be patient and avoid clicking outside the browser during loading (may crash)
+**Helper functions:**
+- `_get_path_info(path)` — stats a path, returns owner/group names, octal/symbolic mode, raw uid/gid/mode int
+- `check_write_permissions(pipeline_path)` — returns `(can_write, file_issues, files_missing)`
 
 ## Key Implementation Details
 
 - Host bound to `0.0.0.0` for Docker compatibility
 - Only supports PNG image format
-- QA status values: "yes", "no", "maybe"
-- File permissions set to 0o770 (rwxrwx---) for group-writable access
 - `QA.json` auto-created with default status "yes"; changes saved when navigating to next image
 - `QA.csv` is regenerated from JSON on each save
 

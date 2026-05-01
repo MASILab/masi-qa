@@ -142,6 +142,36 @@
             background-color: #fafafa;
             border-radius: 4px;
         }
+        .perm-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+        .perm-table th {
+            background-color: #c62828;
+            color: white;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: bold;
+        }
+        .perm-table td {
+            padding: 7px 10px;
+            border-bottom: 1px solid #ffcdd2;
+            font-family: monospace;
+            vertical-align: top;
+        }
+        .perm-table tr:last-child td {
+            border-bottom: none;
+        }
+        .perm-table tr:nth-child(even) td {
+            background-color: #fff5f5;
+        }
+        .current-user {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #555;
+        }
     </style>
 </head>
 <body>
@@ -167,44 +197,73 @@
         <div class="error-box">
             <div class="error-box-title">Permission Issues Detected</div>
             <p>The following QA files cannot be {{ 'created' if files_missing else 'modified' }}:</p>
-            <ul class="file-list">
-                {% for file_info in file_issues %}
-                <li>
-                    {{ file_info.name }}
-                    <span class="file-status {{ file_info.status }}">{{ file_info.message }}</span>
-                </li>
-                {% endfor %}
-            </ul>
+            <table class="perm-table">
+                <thead>
+                    <tr>
+                        <th>Path</th>
+                        <th>Owner</th>
+                        <th>Group</th>
+                        <th>Current Mode</th>
+                        <th>Needed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for file_info in file_issues %}
+                    <tr>
+                        <td>{{ file_info.full_path }}<br><span class="file-status {{ file_info.status }}">{{ file_info.message }}</span></td>
+                        <td>{{ file_info.owner }}</td>
+                        <td>{{ file_info.group }}</td>
+                        <td>{{ file_info.mode_symbolic }} ({{ file_info.mode_octal }})</td>
+                        <td>{{ file_info.needed }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <p class="current-user">You are logged in as: <strong>{{ current_user }}</strong></p>
         </div>
 
         <div class="info-box">
             <div class="info-box-title">How to Fix</div>
-            <p>Run one of the following commands to grant write access:</p>
+            {% set owned_issues = file_issues | selectattr('user_is_owner') | list %}
+            {% set not_owned_issues = file_issues | rejectattr('user_is_owner') | list %}
+            {% set in_group_issues = not_owned_issues | selectattr('user_in_group') | list %}
+            {% set no_access_issues = not_owned_issues | rejectattr('user_in_group') | list %}
+            {% set wrong_perm_issues = file_issues | selectattr('status', 'equalto', 'wrong-permissions') | list %}
+            {% set chgrp_eligible = no_access_issues | selectattr('group_has_write') | list %}
 
-            {% if files_missing %}
-            <p><strong>Option 1:</strong> Grant write permission to the directory:</p>
+            {% if owned_issues %}
+            <p><strong>Grant write permission</strong> (you own these files, no sudo needed):</p>
             <div class="command-box"><span class="comment"># Add write permission for your user</span>
-chmod u+w "{{ pipeline_path }}"</div>
-
-            <p><strong>Option 2:</strong> If you need group write access:</p>
-            <div class="command-box"><span class="comment"># Add write permission for group</span>
-chmod g+w "{{ pipeline_path }}"</div>
-
-            {% else %}
-            <p><strong>Option 1:</strong> Grant write permission to the QA files:</p>
-            <div class="command-box"><span class="comment"># Add write permission for your user</span>
-{% for file_info in file_issues %}chmod u+w "{% if file_info.name == 'Directory' %}{{ pipeline_path }}{% else %}{{ pipeline_path }}/{{ file_info.name }}{% endif %}"
-{% endfor %}</div>
-
-            <p><strong>Option 2:</strong> If you need group write access:</p>
-            <div class="command-box"><span class="comment"># Add write permission for group</span>
-{% for file_info in file_issues %}chmod g+w "{% if file_info.name == 'Directory' %}{{ pipeline_path }}{% else %}{{ pipeline_path }}/{{ file_info.name }}{% endif %}"
+{% for f in owned_issues %}chmod u+w "{{ f.full_path }}"
 {% endfor %}</div>
             {% endif %}
 
-            <p><strong>Option 3:</strong> Change ownership (requires sudo):</p>
-            <div class="command-box"><span class="comment"># Change owner to your user</span>
-sudo chown $(whoami){% if files_missing %} "{{ pipeline_path }}"{% else %}{% for file_info in file_issues %} "{% if file_info.name == 'Directory' %}{{ pipeline_path }}{% else %}{{ pipeline_path }}/{{ file_info.name }}{% endif %}"{% endfor %}{% endif %}</div>
+            {% set in_group_writable = in_group_issues | rejectattr('status', 'equalto', 'wrong-permissions') | list %}
+            {% if in_group_writable %}
+            <p><strong>Grant group write permission</strong> (you are in the group but not the owner — requires sudo):</p>
+            <div class="command-box"><span class="comment"># Add group write permission</span>
+{% for f in in_group_writable %}sudo chmod g+w "{{ f.full_path }}"
+{% endfor %}</div>
+            {% endif %}
+
+            {% if no_access_issues %}
+            <p><strong>Change ownership</strong> (you are neither the owner nor in the group — requires sudo):</p>
+            <div class="command-box"><span class="comment"># Take ownership of the affected files/directories</span>
+sudo chown $(whoami){% for f in no_access_issues %} "{{ f.full_path }}"{% endfor %}</div>
+
+            {% if chgrp_eligible %}
+            <p><strong>Alternative:</strong> Change the group instead (preserves current owner, works because these already have group write permission):</p>
+            <div class="command-box"><span class="comment"># Change group to your primary group</span>
+sudo chgrp $(id -gn){% for f in chgrp_eligible %} "{{ f.full_path }}"{% endfor %}</div>
+            {% endif %}
+            {% endif %}
+
+            {% if wrong_perm_issues %}
+            <p><strong>Fix file permissions</strong> (requires sudo or ask the file owner to run this):</p>
+            <div class="command-box"><span class="comment"># Set correct permissions (rwxrwx---)</span>
+{% for f in wrong_perm_issues %}sudo chmod 770 "{{ f.full_path }}"
+{% endfor %}</div>
+            {% endif %}
         </div>
 
         <div class="btn-group">
