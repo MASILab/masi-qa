@@ -70,6 +70,66 @@ When the app cannot write QA files, it shows `permission_error.html` with contex
 - `_get_path_info(path)` — stats a path, returns owner/group names, octal/symbolic mode, raw uid/gid/mode int
 - `check_write_permissions(pipeline_path)` — returns `(can_write, file_issues, files_missing)`
 
+## Testing
+
+### Running tests
+
+```bash
+source .venv/bin/activate
+pytest          # run all tests
+pytest -k permissions   # run a subset by name
+pytest tests/test_routes.py  # run one file
+```
+
+`pytest` auto-discovers tests because `pyproject.toml` has `testpaths = ["tests"]`.
+
+### Test suite layout
+
+```
+tests/
+├── conftest.py          # shared fixtures (app, client, temp dirs, sample JSON)
+├── test_utils.py        # pure Python utility functions (no Flask, no filesystem writes)
+├── test_permissions.py  # _get_path_info + check_write_permissions
+└── test_routes.py       # Flask routes via test client (no browser needed)
+```
+
+### Key fixtures (conftest.py)
+
+| Fixture | What it provides |
+|---|---|
+| `app` | Flask app in `TESTING` mode |
+| `client` | Flask test client |
+| `tmp_pipeline` | `tmp_path/dataset/pipeline/` with two flat PNGs |
+| `tmp_bids_pipeline` | Same but with BIDS-compliant filenames |
+| `qa_json_flat` | Writes a flat `QA.json` (0o770) into `tmp_pipeline`; returns the dict |
+| `qa_json_bids` | Writes a BIDS `QA.json` (0o770) into `tmp_bids_pipeline`; returns the dict |
+| `reset_bids_mode` | `autouse` — restores the global `BIDS_MODE` after every test |
+| `set_session(client, ...)` | Helper (not a fixture) to populate Flask session before a route test |
+
+`tmp_pipeline` and `tmp_bids_pipeline` each create `dataset/pipeline` inside `tmp_path`. Do not use both fixtures together in the same test — they share `tmp_path` and will conflict on the same subdirectory.
+
+`MINIMAL_PNG` (bytes literal in `conftest.py`) is used to create fake PNG files. It does not require Pillow; the app never validates PNG content server-side.
+
+### Testing approach by layer
+
+**Pure Python functions (`test_utils.py`)**
+Test these directly without the Flask app or real files. Use `tmp_path` only when the function writes to disk (`save_json_file`, `convert_json_to_csv`). Prefer `@pytest.mark.parametrize` for functions with multiple input variants (e.g. BIDS filename patterns).
+
+**Permission functions (`test_permissions.py`)**
+Use `os.chmod()` on `tmp_path` files to simulate unwritable scenarios — no root access needed. To simulate "file owned by a different user" (which cannot be done without root), use `unittest.mock.patch('os.stat', ...)` to return a fake `st_uid`.
+
+**Flask routes (`test_routes.py`)**
+Use `client.get()`/`client.post()` — no real server or browser is started. Always call `set_session(client, qa_directory, ...)` before any route that requires an active session; routes decorated with `@require_qa_directory` will redirect to `/` without it. Check response HTML by decoding `resp.data.decode()`.
+
+### Design rules for new tests
+
+1. **One assert per logical fact** — a test named `test_X` should assert exactly what X implies, not bundle unrelated checks.
+2. **Use classes to group** — put related tests in a class (e.g. `class TestCheckWritePermissionsOK`). The class name appears in output and makes failures self-describing.
+3. **Parametrize data-driven cases** — if the same logic applies to multiple inputs, use `@pytest.mark.parametrize` rather than copying the test body.
+4. **Restore state after mutation** — any test that calls `os.chmod()` must restore permissions in a `finally` block so `tmp_path` cleanup succeeds.
+5. **Don't test the template's exact wording** — assert that a key phrase or field value appears in the response, not the full sentence. Template copy changes should not break tests.
+6. **Fixtures own the filesystem; tests own assertions** — do not create files inside a test function if a fixture can do it. Tests should read and assert, not set up.
+
 ## Key Implementation Details
 
 - Host bound to `0.0.0.0` for Docker compatibility

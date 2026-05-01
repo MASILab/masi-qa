@@ -34,3 +34,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 masi_qa = ["templates/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning:werkzeug",
+    "ignore::DeprecationWarning:ast",
+]
