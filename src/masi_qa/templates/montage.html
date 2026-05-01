@@ -235,7 +235,7 @@
         </div>
         <button type="button" class="btn-back" onclick="saveAndGoBack()">
             <span>&#8592;</span>
-            <span>Change Selection</span>
+            <span>Save / Change Selection</span>
         </button>
     </div>
 
@@ -248,7 +248,7 @@
                 <div id="reviewProgressFill" class="review-progress-fill" style="width: 0%"></div>
             </div>
         </div>
-        <div id="allReviewedBanner" class="all-reviewed-banner hidden">All images have been reviewed!</div>
+        <div id="allReviewedBanner" class="all-reviewed-banner hidden">All images have been reviewed! Click "Save / Change Selection" to save and exit.</div>
     </div>
     <div id="imageMontage"></div>
     <div class="navigation-controls">
@@ -1007,7 +1007,7 @@
                     if (backButton) {
                         backButton.style.opacity = '1';
                         backButton.style.cursor = 'pointer';
-                        backButton.querySelector('span:last-child').textContent = 'Change Selection';
+                        backButton.querySelector('span:last-child').textContent = 'Save / Change Selection';
                     }
                     if (confirm('Failed to save QA data. Leave anyway?')) {
                         window.location.href = '/';
