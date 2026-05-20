@@ -13,13 +13,7 @@ authors = [
   { name = "Michael Kim", email = "michael.kim@vanderbilt.edu" },
   { name = "Yihao Liu", email = "yihao.liu@vanderbilt.edu" }
 ]
-dependencies = [
-  "flask==2.2.2",
-  "numpy<2.0",
-  "pandas==2.0.3",
-  "tqdm",
-  "Werkzeug==2.2.2"
-]
+dynamic = ["dependencies"]
 
 [project.scripts]
 masi-qa = "masi_qa.app_montage:main"
@@ -34,6 +28,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 masi_qa = ["templates/**"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
