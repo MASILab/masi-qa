@@ -26,9 +26,11 @@
             margin-bottom: 10px;
         }
         .image-name {
+            font-size: 12px;
             font-weight: bold;
             text-decoration: underline;
             margin-bottom: 10px;
+            word-break: break-all;
         }
         .qa-buttons {
             display: flex;
@@ -218,6 +220,14 @@
             font-size: 13px;
             color: #666;
         }
+        #bgLoadStatus {
+            font-size: 13px;
+            color: #666;
+            margin-left: 12px;
+        }
+        #bgLoadStatus.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -253,13 +263,13 @@
     <div id="imageMontage"></div>
     <div class="navigation-controls">
         <span id="counter" class="counter">0/0</span>
-        <input type="number" id="jumpInput" min="1" placeholder="Go to #"
-               onfocus="isInputFocused=true" onblur="isInputFocused=false"
-               onkeydown="if(event.key==='Enter'){jumpToImageFromInput(); event.preventDefault();}">
+        <input type="number" id="jumpInput" min="1" placeholder="Go to #">
+        <button class="btn-nav" id="jumpGoBtn">Go</button>
         <button class="btn-nav" onclick="jumpToNextUnreviewed()">Next Unreviewed (N)</button>
         <label for="speed-slider" style="margin-left: 20px;">Speed:</label>
         <input type="range" id="speed-slider" min="50" max="500" value="250" step="10">
         <span id="speed-value">250ms</span>
+        <span id="bgLoadStatus" class="hidden"></span>
     </div>
     <div class="loading-bar-container">
         <div id="loadingBar" class="loading-bar-progress"></div>
@@ -269,12 +279,19 @@
         // Debug flag - set to true to enable console logging
         const DEBUG = false;
 
+        // Number of images to preload before showing the montage. Remaining images
+        // load in the background while the user starts reviewing.
+        const INITIAL_BATCH_SIZE = 1000;
+
         // Extract image paths from template data
         const imagePaths = JSON.parse('{{ image_paths|tojson|safe }}'); /* const imagePaths = {{ image_paths|tojson }}; */
         const clickedPath = '{{ clicked_path }}';
         const pipeline = '{{ pipeline }}';
         const bidsMode = {{ bids_mode|tojson }};  // BIDS mode flag from server
         const userName = '{{ user_name|default("", true) }}';  // User name from server
+        // When true, start the user at the first unreviewed image and prioritize loading
+        // unreviewed images before reviewed ones.
+        const startFromUnreviewed = {{ start_from_unreviewed|tojson }};
         let currentImageIndex = 0; // Track current image index
         let isLooping = false; // Flag to track if looping is active
         let updateInterval = null; // Interval reference for automatic update
@@ -318,38 +335,139 @@
             return imagePath.startsWith(prefix) ? imagePath.slice(prefix.length) : imagePath.split('/').pop();
         }
 
-        //function that preloads all images and initializes the montage
+        // Preload an initial batch of images, then initialize the montage and continue
+        // loading the rest in the background.
+        //
+        // Loading order depends on the startFromUnreviewed flag:
+        //   - false (default): initial batch = indices [0, INITIAL_BATCH_SIZE);
+        //                      background = the rest, sequentially.
+        //   - true:            initial batch = indices [firstUnreviewed,
+        //                                              firstUnreviewed + INITIAL_BATCH_SIZE)
+        //                                              capped at total;
+        //                      background = remaining unreviewed first, then reviewed.
+        //                      currentImageIndex starts at firstUnreviewed.
         function preloadImagesAndInitialize() {
-            let loadedCount = 0;
             const totalImages = imagePaths.length;
 
-            // Function to handle image loading
-            function handleImageLoad() {
-                loadedCount++;
-                updateLoadingBar(loadedCount, totalImages);
-                if (loadedCount === totalImages) {
+            // Edge case: no images to load
+            if (totalImages === 0) {
+                hideLoadingBar();
+                initializeMontage();
+                unreviewedIndices = [];
+                updateAllReviewedBanner();
+                return;
+            }
+
+            // Pre-compute unreviewed indices from the QA dict (does not require images
+            // to be loaded). This drives both the start-from-unreviewed jump and the
+            // jump-to-next-unreviewed shortcut.
+            unreviewedIndices = computeUnreviewedIndices();
+
+            let initialIndices, backgroundIndices;
+
+            if (startFromUnreviewed && unreviewedIndices.length > 0) {
+                const firstUnreviewed = unreviewedIndices[0];
+                currentImageIndex = firstUnreviewed;
+
+                // Initial batch: contiguous block of INITIAL_BATCH_SIZE starting at firstUnreviewed
+                const endIdx = Math.min(firstUnreviewed + INITIAL_BATCH_SIZE, totalImages);
+                initialIndices = [];
+                for (let i = firstUnreviewed; i < endIdx; i++) initialIndices.push(i);
+
+                const initialSet = new Set(initialIndices);
+                const unreviewedSet = new Set(unreviewedIndices);
+
+                // Background ordering: remaining unreviewed first, then reviewed.
+                backgroundIndices = [];
+                for (const i of unreviewedIndices) {
+                    if (!initialSet.has(i)) backgroundIndices.push(i);
+                }
+                for (let i = 0; i < totalImages; i++) {
+                    if (!initialSet.has(i) && !unreviewedSet.has(i)) backgroundIndices.push(i);
+                }
+            } else {
+                // Default: load 0..INITIAL_BATCH_SIZE first, then the rest sequentially
+                const initialBatch = Math.min(INITIAL_BATCH_SIZE, totalImages);
+                initialIndices = [];
+                for (let i = 0; i < initialBatch; i++) initialIndices.push(i);
+                backgroundIndices = [];
+                for (let i = initialBatch; i < totalImages; i++) backgroundIndices.push(i);
+            }
+
+            updateAllReviewedBanner();
+
+            let initialLoadedCount = 0;
+            function handleInitialLoad() {
+                initialLoadedCount++;
+                updateLoadingBar(initialLoadedCount, initialIndices.length);
+                if (initialLoadedCount === initialIndices.length) {
                     hideLoadingBar();
                     initializeMontage();
-                    // Initialize unreviewed indices array and update banner
-                    initializeUnreviewedIndices();
-                    updateAllReviewedBanner();
+                    if (backgroundIndices.length > 0) {
+                        startBackgroundLoading(backgroundIndices);
+                    }
                 }
             }
 
-            imagePaths.forEach((imagePath, index) => {
-                const imageName = getRelativeImagePath(imagePath);
+            initialIndices.forEach(i => {
+                const imageName = getRelativeImagePath(imagePaths[i]);
                 const imageUrl = constructImageUrl(clickedPath, pipeline, imageName);
                 const img = new Image();
                 img.onload = () => {
-                    imageElements[index] = img; // Store loaded image element
-                    handleImageLoad();
+                    imageElements[i] = img;
+                    handleInitialLoad();
                 };
                 img.onerror = () => {
                     console.log('Error loading image:', imageName);
-                    handleImageLoad(); // Ensure loadedCount is updated even if there's an error
+                    handleInitialLoad();
                 };
                 img.src = imageUrl;
             });
+        }
+
+        // Background loader: kicks off loads for the given indices in order. Browsers
+        // dispatch image fetches in roughly the order they're created, so listing
+        // unreviewed indices first means they get fetched first.
+        let backgroundLoadedCount = 0;
+        let backgroundTotal = 0;
+        function startBackgroundLoading(indices) {
+            backgroundTotal = indices.length;
+            backgroundLoadedCount = 0;
+            const totalImages = imagePaths.length;
+            const statusEl = document.getElementById('bgLoadStatus');
+            if (statusEl) {
+                statusEl.classList.remove('hidden');
+                const loaded = totalImages - backgroundTotal;
+                statusEl.textContent = `Loading ${loaded}/${totalImages} in background…`;
+            }
+            indices.forEach(i => {
+                const imageName = getRelativeImagePath(imagePaths[i]);
+                const imageUrl = constructImageUrl(clickedPath, pipeline, imageName);
+                const img = new Image();
+                img.onload = () => {
+                    imageElements[i] = img;
+                    updateBackgroundLoadStatus();
+                };
+                img.onerror = () => {
+                    console.log('Error loading image:', imageName);
+                    updateBackgroundLoadStatus();
+                };
+                img.src = imageUrl;
+            });
+        }
+
+        function updateBackgroundLoadStatus() {
+            backgroundLoadedCount++;
+            const statusEl = document.getElementById('bgLoadStatus');
+            if (!statusEl) return;
+            if (backgroundLoadedCount >= backgroundTotal) {
+                statusEl.classList.add('hidden');
+                statusEl.textContent = '';
+            } else {
+                const totalImages = imagePaths.length;
+                const loaded = (totalImages - backgroundTotal) + backgroundLoadedCount;
+                statusEl.textContent = `Loading ${loaded}/${totalImages} in background…`;
+            }
         }
         // function preloadImagesAndInitialize() {
         //     let loadedCount = 0;
@@ -425,9 +543,10 @@
             const qaDict = getLeafDict(nestedDict, bidsFields);
             console.log('QA Dictionary:', qaDict);
 
-            //const imageUrl = constructImageUrl(clickedPath, pipeline, imageName);
-            //console.log('Fetching image from URL:', imageUrl);
-            const imageUrl = imageElements[currentImageIndex].src;
+            // Use the preloaded image if available; otherwise fall back to the direct URL
+            // so the browser fetches it on demand (background loader will fill it in later).
+            const preloaded = imageElements[currentImageIndex];
+            const imageUrl = preloaded ? preloaded.src : constructImageUrl(clickedPath, pipeline, imageName);
             imagePreview.src = imageUrl;
 
             imageContainer.appendChild(imagePreview);
@@ -857,20 +976,21 @@
             }
         }
 
-        // Function to initialize the unreviewed indices array (called once on page load)
-        // Builds a sorted array of indices for O(1) "next unreviewed" navigation
-        function initializeUnreviewedIndices() {
-            unreviewedIndices = [];
+        // Build a sorted array of unreviewed image indices from the QA dict.
+        // Pure function — does not depend on images being loaded — so we can call this
+        // before preloading to drive the start-from-unreviewed flow.
+        function computeUnreviewedIndices() {
+            const indices = [];
             for (let i = 0; i < imagePaths.length; i++) {
                 const imagePath = imagePaths[i];
                 const imageName = getRelativeImagePath(imagePath);
                 const bidsFields = getBIDSFieldsFromPNG(imageName, false);
                 const qaDict = getLeafDict(nestedDict, bidsFields);
-                if (!qaDict['date'] || qaDict['date'] === '') {
-                    unreviewedIndices.push(i);
+                if (!qaDict || !qaDict['date'] || qaDict['date'] === '') {
+                    indices.push(i);
                 }
             }
-            // Array is already sorted since we iterate in order
+            return indices;
         }
 
         // Function to save current image state (extracted for reuse)
@@ -1026,6 +1146,27 @@
             autoplayDelay = parseInt(e.target.value);
             document.getElementById('speed-value').textContent = autoplayDelay + 'ms';
         });
+
+        // Jump-to-image input wiring. Use addEventListener (not inline) so that the
+        // keydown handler can stopPropagation, preventing the document-level Enter
+        // listener from running. The document handler interprets Enter as "toggle
+        // focus on the reason input," which is the wrong intent for the jump input.
+        (function() {
+            const jumpInput = document.getElementById('jumpInput');
+            const jumpGoBtn = document.getElementById('jumpGoBtn');
+            jumpInput.addEventListener('focus', function() { isInputFocused = true; });
+            jumpInput.addEventListener('blur', function() { isInputFocused = false; });
+            jumpInput.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    jumpToImageFromInput();
+                }
+            });
+            jumpGoBtn.addEventListener('click', function() {
+                jumpToImageFromInput();
+            });
+        })();
 
         // Initialize montage on page load
         preloadImagesAndInitialize();

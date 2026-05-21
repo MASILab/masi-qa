@@ -816,7 +816,12 @@ def set_options():
         qa_options = ['yes', 'no', 'maybe']
 
     session['qa_options'] = qa_options
-    return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name'], 'qa_options': session['qa_options']})
+
+    # "Start from unreviewed" flag controls the initial-image-index and preload order
+    # in the montage page. False by default; only true if the home-page checkbox is set.
+    session['start_from_unreviewed'] = bool(data.get('start_from_unreviewed', False))
+
+    return jsonify({'success': True, 'bids_mode': session['bids_mode'], 'user_name': session['user_name'], 'qa_options': session['qa_options'], 'start_from_unreviewed': session['start_from_unreviewed']})
 
 
 @app.route('/convert-qa-format/<path:clicked_path>/<path:pipeline>', methods=['POST'])
@@ -1088,7 +1093,8 @@ def render_montage(clicked_path, pipeline):
                            bids_mode=bids_mode,
                            user_name=user_name,
                            qa_options=qa_options,
-                           default_status=default_status)
+                           default_status=default_status,
+                           start_from_unreviewed=session.get('start_from_unreviewed', False))
 
     #maybe assert the following python functions:
 
@@ -1200,7 +1206,8 @@ def render_montage_standard():
                            bids_mode=bids_mode,
                            user_name=user_name,
                            qa_options=qa_options,
-                           default_status=default_status)
+                           default_status=default_status,
+                           start_from_unreviewed=session.get('start_from_unreviewed', False))
 
 @app.route('/qa/<path:image_filename>')
 @require_qa_directory
