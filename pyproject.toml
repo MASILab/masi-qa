@@ -4,16 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "masi-qa"
-version = "0.1.0"
+version = "0.1.1"
 description = "Flask-based QA tool for reviewing and annotating medical images."
 readme = "README.md"
 requires-python = ">=3.8"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "Michael Kim", email = "michael.kim@vanderbilt.edu" },
   { name = "Yihao Liu", email = "yihao.liu@vanderbilt.edu" }
 ]
-dynamic = ["dependencies"]
+dependencies = [
+  "flask==2.2.2",
+  "numpy<2.0",
+  "pandas==2.0.3",
+  "tqdm",
+  "Werkzeug==2.2.2",
+]
+keywords = ["medical-imaging", "qa", "quality-assurance", "bids", "neuroimaging"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/MASILab/masi-qa"
+Repository = "https://github.com/MASILab/masi-qa"
+Issues = "https://github.com/MASILab/masi-qa/issues"
 
 [project.scripts]
 masi-qa = "masi_qa.app_montage:main"
@@ -29,8 +53,6 @@ where = ["src"]
 [tool.setuptools.package-data]
 masi_qa = ["templates/**"]
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
