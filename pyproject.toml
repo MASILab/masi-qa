@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "masi-qa"
-version = "0.1.1"
+version = "0.1.2"
 description = "Flask-based QA tool for reviewing and annotating medical images."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -17,7 +17,7 @@ authors = [
 dependencies = [
   "flask==2.2.2",
   "numpy<2.0",
-  "pandas==2.0.3",
+  "pandas>=2.0.3,<3.0",
   "tqdm",
   "Werkzeug==2.2.2",
 ]
