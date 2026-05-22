@@ -1,8 +1,14 @@
 # masi-qa
 
-A Flask-based web application for reviewing and annotating medical QA images (PNG files). It provides a keyboard-driven interface for rapid quality assurance review of imaging data.
+[![PyPI version](https://badge.fury.io/py/masi-qa.svg)](https://pypi.org/project/masi-qa/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-Supports both Standard and BIDS-compliant modes.
+**A keyboard-driven web application for rapid quality assurance review of medical imaging data.**
+
+---
+
+## Citation
 
 If you use this for your research, please cite the following papers:
 
@@ -90,21 +96,37 @@ The default options are **yes**, **no**, **maybe**.
 
 ## Expected Directory Structure
 
+### Standard Mode (`masi-qa`)
+
+Select any directory containing PNG files:
+
 ```
 /your/qa/directory/
+├── image1.png
+├── image2.png
+├── subdir/            (subdirectories supported)
+│   └── image3.png
+├── QA.json            (auto-created)
+└── QA.csv             (auto-created)
+```
+
+### BIDS Mode (`masi-bids-qa`)
+
+Requires a three-level hierarchy: root → dataset → pipeline:
+
+```
+/root/
 ├── dataset1/
 │   └── pipeline1/
-│       ├── image1.png
-│       ├── image2.png
+│       ├── sub-001_ses-01_T1w.png
+│       ├── sub-002_ses-01_T1w.png
 │       ├── QA.json    (auto-created)
 │       └── QA.csv     (auto-created)
 ├── dataset2/
 │   └── pipeline2/
-│       ├── image1.png
+│       ├── sub-001_ses-01_DTI.png
 │       └── ...
 ```
-
-Each pipeline directory should contain PNG files only.
 
 ## Modes
 
@@ -216,6 +238,7 @@ masi-qa --port 8080
 
 If you use this software in your research, please cite:
 
+```bibtex
 @article{kim2025scalable,
   title={Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets},
   author={Kim, Michael E and Gao, Chenyu and Newlin, Nancy R and Rudravaram, Gaurav and Krishnan, Aravind R and Ramadass, Karthik and Kanakaraj, Praitayini and Schilling, Kurt G and Dewey, Blake E and Bennett, David A and others},
@@ -238,6 +261,7 @@ If you use this software in your research, please cite:
   doi           = {10.48550/arXiv.2605.21799},
   url           = {https://arxiv.org/abs/2605.21799}
 }
+```
 
 ## Authors
 
