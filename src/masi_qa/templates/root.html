@@ -521,6 +521,14 @@
                 <input type="text" id="userName" placeholder="Enter your name (required)" value="{{ user_name or '' }}" oninput="updateSettingsState()">
             </div>
 
+            <!-- Start from first unreviewed (loads unreviewed images first) -->
+            <div class="setting-item">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="startFromUnreviewed">
+                    <span>Start from first unreviewed image &mdash; loads 1000 images starting at the first unreviewed, then the rest of the unreviewed in the background, then the reviewed</span>
+                </label>
+            </div>
+
             <!-- Collapsible QA Options Panel -->
             <div class="qa-options-toggle" onclick="toggleQAOptionsPanel()">
                 <span class="arrow" id="qaOptionsArrow">&#9654;</span>
@@ -1115,13 +1123,15 @@
 
             // Save QA settings to session first
             // Note: BIDS mode is determined by which command was used (masi-qa vs masi-bids-qa)
+            const startFromUnreviewed = document.getElementById('startFromUnreviewed').checked;
             try {
                 const response = await fetch('/set-options', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         user_name: userName,
-                        qa_options: validOptions
+                        qa_options: validOptions,
+                        start_from_unreviewed: startFromUnreviewed
                     })
                 });
 
