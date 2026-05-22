@@ -1429,6 +1429,8 @@ def _run_app(bids_mode=False):
     print("  MASI Lab @ Vanderbilt University")
     print("  License: MIT")
     print()
+    print("  Homepage: https://github.com/MASILab/masi-qa")
+    print()
     print(f"  Mode: {mode_name}")
 
     # Determine port
