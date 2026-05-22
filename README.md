@@ -4,9 +4,11 @@ A Flask-based web application for reviewing and annotating medical QA images (PN
 
 Supports both Standard and BIDS-compliant modes.
 
-If you use this for your research, please cite the following paper:
+If you use this for your research, please cite the following papers:
 
-Kim, Michael E., et al. "Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets." PLOS One (2025).
+Kim, M. E., Gao, C., Ramadass, K., Rudravaram, G., McMaster, E. M., Saunders, A. M., Yang, Y., Levy, E., Kanakaraj, P., Newlin, N. R., Li, Z., Khairi, N. M., Dewey, B. E., The HABS-HD Study Team, Alzheimer’s Disease Neuroimaging Initiative, Schilling, K. G., Archer, D., Hohman, T. J., Landman, B. A., & Liu, Y. (2026). Large-scale deployment and analytical implications of structured quality control in diffusion magnetic resonance imaging. arXiv. https://doi.org/10.48550/arXiv.2605.21799
+
+Kim, M. E., Gao, C., Newlin, N. R., Rudravaram, G., Krishnan, A. R., Ramadass, K., Kanakaraj, P., Schilling, K. G., Dewey, B. E., Bennett, D. A., O’Bryant, S., Barber, R. C., Archer, D., Hohman, T. J., Bao, S., Li, Z., Landman, B. A., Khairi, N. M., Alzheimer’s Disease Neuroimaging Initiative, & HABS-HD Study Team. (2025). Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets. PLOS ONE, 20(8), e0327388. https://doi.org/10.1371/journal.pone.0327388
 
 ## Features
 
@@ -214,12 +216,34 @@ masi-qa --port 8080
 
 If you use this software in your research, please cite:
 
-> Kim, Michael E., et al. "Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets." *PLOS One* (2025).
+@article{kim2025scalable,
+  title={Scalable quality control on processing of large diffusion-weighted and structural magnetic resonance imaging datasets},
+  author={Kim, Michael E and Gao, Chenyu and Newlin, Nancy R and Rudravaram, Gaurav and Krishnan, Aravind R and Ramadass, Karthik and Kanakaraj, Praitayini and Schilling, Kurt G and Dewey, Blake E and Bennett, David A and others},
+  journal={PloS one},
+  volume={20},
+  number={8},
+  pages={e0327388},
+  year={2025},
+  publisher={Public Library of Science San Francisco, CA USA}
+}
+
+@article{kim2026largescaledeployment,
+  title         = {Large-Scale Deployment and Analytical Implications of Structured Quality Control in Diffusion Magnetic Resonance Imaging},
+  author        = {Kim, Michael E. and Gao, Chenyu and Ramadass, Karthik and Rudravaram, Gaurav and McMaster, Elyssa M. and Saunders, Adam M. and Yang, Yisu and Levy, Elias and Kanakaraj, Praitayini and Newlin, Nancy R. and Li, Zhiyuan and Mohd Khairi, Nazirah and Dewey, Blake E. and {The HABS-HD Study Team} and {Alzheimer's Disease Neuroimaging Initiative} and Schilling, Kurt G. and Archer, Derek and Hohman, Timothy J. and Landman, Bennett A. and Liu, Yihao},
+  year          = {2026},
+  journal       = {arXiv preprint arXiv:2605.21799},
+  eprint        = {2605.21799},
+  archivePrefix = {arXiv},
+  primaryClass  = {eess.IV},
+  doi           = {10.48550/arXiv.2605.21799},
+  url           = {https://arxiv.org/abs/2605.21799}
+}
 
 ## Authors
 
 - Michael Kim (michael.kim@vanderbilt.edu)
 - Yihao Liu (yihao.liu@vanderbilt.edu)
+- Gaurav Rudravaram (gaurav.rudravaram@Vanderbilt.Edu)
 
 ## License
 

@@ -1372,7 +1372,7 @@ def _run_app(bids_mode=False):
     print(f"  {app_name} v{__version__}")
     print("=" * 50)
     print()
-    print("  Authors: Michael Kim, Yihao Liu")
+    print("  Authors: Michael Kim, Yihao Liu, Gaurav Rudravaram")
     print("  MASI Lab @ Vanderbilt University")
     print("  License: MIT")
     print()
