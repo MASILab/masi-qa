@@ -1432,6 +1432,22 @@ def _run_app(bids_mode=False):
     print("  Homepage: https://github.com/MASILab/masi-qa")
     print()
     print(f"  Mode: {mode_name}")
+    print()
+    print("  Expected directory structure:")
+    if BIDS_MODE:
+        print("    /root/")
+        print("    └── dataset/")
+        print("        └── pipeline/")
+        print("            ├── sub-XX_ses-YY_*.png")
+        print("            ├── QA.json  (auto-created)")
+        print("            └── QA.csv   (auto-created)")
+    else:
+        print("    /your/qa/directory/")
+        print("    ├── *.png")
+        print("    ├── subdir/  (subdirectories supported)")
+        print("    │   └── *.png")
+        print("    ├── QA.json  (auto-created)")
+        print("    └── QA.csv   (auto-created)")
 
     # Determine port
     if args.port:
