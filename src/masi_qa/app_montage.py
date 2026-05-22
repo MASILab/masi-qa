@@ -81,6 +81,47 @@ def validate_directory(path):
     return len(errors) == 0, errors
 
 
+def _is_valid_browse_path(path):
+    """Check if a path is valid for browsing (exists, is directory, is readable)."""
+    if not path:
+        return False
+    try:
+        return os.path.isdir(path) and os.access(path, os.R_OK)
+    except (OSError, TypeError):
+        return False
+
+
+def _get_initial_browse_path(session_path):
+    """
+    Get the initial browse path with fallback chain:
+    1. Previously selected path (from session) - if still valid
+    2. Current working directory
+    3. Home directory
+
+    Returns:
+        (path, from_session): Tuple of the path and whether it came from a valid session
+    """
+    # Try session path first
+    if _is_valid_browse_path(session_path):
+        return session_path, True
+
+    # Try current working directory
+    try:
+        cwd = os.getcwd()
+        if _is_valid_browse_path(cwd):
+            return cwd, False
+    except OSError:
+        pass
+
+    # Fall back to home directory
+    home = os.path.expanduser('~')
+    if _is_valid_browse_path(home):
+        return home, False
+
+    # Last resort: root directory
+    return '/', False
+
+
 def _get_path_info(path):
     """Return owner, group, and permission info for a path. Returns None if stat fails."""
     try:
@@ -1008,16 +1049,28 @@ def browse_path():
 
 @app.route('/')
 def index():
-    qa_directory = get_qa_directory()
-    # Pass qa_directory and bids_mode to template (qa_directory may be None if not set)
+    # Get validated initial browse path with fallback chain: session → CWD → home → /
+    initial_browse_path, has_valid_session = _get_initial_browse_path(get_qa_directory())
+
+    # Clear invalid session path to avoid repeated errors
+    if not has_valid_session:
+        session.pop('qa_directory', None)
+
     if args.debug:
-        print("QA Directory:", qa_directory)
+        print("Initial Browse Path:", initial_browse_path)
+        print("Has Valid Session:", has_valid_session)
+
     # Set session bids_mode from global at each page load to ensure consistency
     session['bids_mode'] = BIDS_MODE
     # Get previously entered user name from session (if any)
     user_name = session.get('user_name', '')
     qa_options = session.get('qa_options', ['yes', 'no', 'maybe'])
-    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE, user_name=user_name, qa_options=qa_options)
+    return render_template('root.html',
+        bids_mode=BIDS_MODE,
+        user_name=user_name,
+        qa_options=qa_options,
+        initial_browse_path=initial_browse_path,
+        has_valid_session=has_valid_session)
 
 @app.route('/datasets', methods=['POST'])
 @require_qa_directory

@@ -662,7 +662,7 @@
                 .filter(function(opt) { return opt.length > 0; });
         }
 
-        // Initialize - start from home directory or session directory
+        // Initialize - backend provides validated path with fallback: session → CWD → home → /
         document.addEventListener('DOMContentLoaded', function() {
             // Initialize QA options panel
             renderQAOptions();
@@ -670,12 +670,15 @@
             // Initialize settings state
             updateSettingsState();
 
-            const sessionDir = '{{ qa_directory or "" }}';
-            if (sessionDir) {
-                // Load the directory without resetting, then select it as root
-                loadInitialDirectory(sessionDir);
+            const initialBrowsePath = '{{ initial_browse_path }}';
+            const hasValidSession = {{ 'true' if has_valid_session else 'false' }};
+
+            if (hasValidSession) {
+                // Restore previous selection
+                loadInitialDirectory(initialBrowsePath);
             } else {
-                browsePath('~');
+                // Fresh start - browse initial path
+                browsePath(initialBrowsePath);
             }
         });
 
