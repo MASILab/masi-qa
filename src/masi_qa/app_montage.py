@@ -45,6 +45,8 @@ def pa():
     parser.add_argument('--debug', action='store_true', help='enable debug mode')
     parser.add_argument('--port', type=int, default=None,
                         help='port to run the server on (default: auto-detect 5000-5009)')
+    parser.add_argument('--qa-dir', type=str, default=None,
+                        help='directory to start QA from (default: none)')
 
     return parser.parse_args()
 
@@ -1050,7 +1052,8 @@ def browse_path():
 @app.route('/')
 def index():
     # Get validated initial browse path with fallback chain: session → CWD → home → /
-    initial_browse_path, has_valid_session = _get_initial_browse_path(get_qa_directory())
+    qa_dir = args.qa_dir if args.qa_dir else get_qa_directory()
+    initial_browse_path, has_valid_session = _get_initial_browse_path(qa_dir)
 
     # Clear invalid session path to avoid repeated errors
     if not has_valid_session:
