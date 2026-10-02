@@ -8,7 +8,7 @@ License: MIT
 
 from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file, session
 import pandas as pd
-import os, json, io, argparse, re, grp, pwd, logging, socket, shutil, fcntl, stat
+import os, json, io, argparse, re, grp, logging, socket, shutil, fcntl, stat
 from functools import wraps
 from pathlib import Path
 from datetime import datetime
@@ -81,74 +81,6 @@ def validate_directory(path):
     return len(errors) == 0, errors
 
 
-def _is_valid_browse_path(path):
-    """Check if a path is valid for browsing (exists, is directory, is readable)."""
-    if not path:
-        return False
-    try:
-        return os.path.isdir(path) and os.access(path, os.R_OK)
-    except (OSError, TypeError):
-        return False
-
-
-def _get_initial_browse_path(session_path):
-    """
-    Get the initial browse path with fallback chain:
-    1. Previously selected path (from session) - if still valid
-    2. Current working directory
-    3. Home directory
-
-    Returns:
-        (path, from_session): Tuple of the path and whether it came from a valid session
-    """
-    # Try session path first
-    if _is_valid_browse_path(session_path):
-        return session_path, True
-
-    # Try current working directory
-    try:
-        cwd = os.getcwd()
-        if _is_valid_browse_path(cwd):
-            return cwd, False
-    except OSError:
-        pass
-
-    # Fall back to home directory
-    home = os.path.expanduser('~')
-    if _is_valid_browse_path(home):
-        return home, False
-
-    # Last resort: root directory
-    return '/', False
-
-
-def _get_path_info(path):
-    """Return owner, group, and permission info for a path. Returns None if stat fails."""
-    try:
-        st = os.stat(path)
-        mode = stat.S_IMODE(st.st_mode)
-        try:
-            owner = pwd.getpwuid(st.st_uid).pw_name
-        except KeyError:
-            owner = str(st.st_uid)
-        try:
-            group = grp.getgrgid(st.st_gid).gr_name
-        except KeyError:
-            group = str(st.st_gid)
-        symbolic = stat.filemode(st.st_mode)[1:]  # strip leading type char (d/-)
-        return {
-            'owner': owner,
-            'group': group,
-            'mode_octal': oct(mode)[2:],   # e.g. '750'
-            'mode_symbolic': symbolic,      # e.g. 'rwxr-x---'
-            'uid': st.st_uid,
-            'gid': st.st_gid,
-            'mode': mode,                  # raw int for bit-checking
-        }
-    except OSError:
-        return None
-
-
 def check_write_permissions(pipeline_path):
     """
     Check if QA files can be written/created in the pipeline directory.
@@ -165,71 +97,39 @@ def check_write_permissions(pipeline_path):
     file_issues = []
     files_missing = False
 
-    current_uid = os.getuid()
-    current_gids = set(os.getgroups()) | {os.getgid()}
-
     # Check if files exist
     json_exists = json_path.exists()
     csv_exists = csv_path.exists()
 
     # Always check directory write permission (needed for .QA.lock file during writes)
     if not os.access(pipeline_path, os.W_OK):
-        info = _get_path_info(pipeline_path)
         file_issues.append({
             'name': 'Directory',
-            'full_path': str(pipeline_path),
             'status': 'not-writable',
-            'message': 'cannot create lock file for safe writes',
-            'owner': info['owner'] if info else '?',
-            'group': info['group'] if info else '?',
-            'mode_octal': info['mode_octal'] if info else '?',
-            'mode_symbolic': info['mode_symbolic'] if info else '?',
-            'needed': 'write permission (u+w or g+w)',
-            'user_is_owner': info['uid'] == current_uid if info else False,
-            'user_in_group': info['gid'] in current_gids if info else False,
-            'group_has_write': bool(info['mode'] & 0o020) if info else False,
+            'message': 'cannot create lock file for safe writes'
         })
         files_missing = not json_exists or not csv_exists
 
     # Check existing files for write permission
     if json_exists and not os.access(json_path, os.W_OK):
-        info = _get_path_info(json_path)
         file_issues.append({
             'name': 'QA.json',
-            'full_path': str(json_path),
             'status': 'not-writable',
-            'message': 'exists but not writable',
-            'owner': info['owner'] if info else '?',
-            'group': info['group'] if info else '?',
-            'mode_octal': info['mode_octal'] if info else '?',
-            'mode_symbolic': info['mode_symbolic'] if info else '?',
-            'needed': 'write permission (u+w or g+w)',
-            'user_is_owner': info['uid'] == current_uid if info else False,
-            'user_in_group': info['gid'] in current_gids if info else False,
-            'group_has_write': bool(info['mode'] & 0o020) if info else False,
+            'message': 'exists but not writable'
         })
 
     if csv_exists and not os.access(csv_path, os.W_OK):
-        info = _get_path_info(csv_path)
         file_issues.append({
             'name': 'QA.csv',
-            'full_path': str(csv_path),
             'status': 'not-writable',
-            'message': 'exists but not writable',
-            'owner': info['owner'] if info else '?',
-            'group': info['group'] if info else '?',
-            'mode_octal': info['mode_octal'] if info else '?',
-            'mode_symbolic': info['mode_symbolic'] if info else '?',
-            'needed': 'write permission (u+w or g+w)',
-            'user_is_owner': info['uid'] == current_uid if info else False,
-            'user_in_group': info['gid'] in current_gids if info else False,
-            'group_has_write': bool(info['mode'] & 0o020) if info else False,
+            'message': 'exists but not writable'
         })
 
     # Check existing files have correct permissions (0o770) for multi-user access
     # If permissions are wrong and we're the owner, fix them silently
     # If permissions are wrong and we're not the owner, add to file_issues
     expected_mode = 0o770
+    current_uid = os.getuid()
 
     for file_path, file_name, exists in [
         (json_path, 'QA.json', json_exists),
@@ -248,20 +148,10 @@ def check_write_permissions(pipeline_path):
                             pass  # Best effort, continue anyway
                     else:
                         # Not the owner, can't fix - report issue
-                        info = _get_path_info(file_path)
                         file_issues.append({
                             'name': file_name,
-                            'full_path': str(file_path),
                             'status': 'wrong-permissions',
-                            'message': f'has mode {oct(current_mode)}, needs {oct(expected_mode)} (ask owner to fix)',
-                            'owner': info['owner'] if info else '?',
-                            'group': info['group'] if info else '?',
-                            'mode_octal': info['mode_octal'] if info else '?',
-                            'mode_symbolic': info['mode_symbolic'] if info else '?',
-                            'needed': 'rwxrwx--- (770)',
-                            'user_is_owner': False,  # auto-fixed if owned; only reported when not owner
-                            'user_in_group': info['gid'] in current_gids if info else False,
-                            'group_has_write': bool(info['mode'] & 0o020) if info else False,
+                            'message': f'has mode {oct(current_mode)}, needs {oct(expected_mode)} (ask owner to fix)'
                         })
             except OSError:
                 pass  # Can't stat file, skip permission check
@@ -1049,28 +939,16 @@ def browse_path():
 
 @app.route('/')
 def index():
-    # Get validated initial browse path with fallback chain: session → CWD → home → /
-    initial_browse_path, has_valid_session = _get_initial_browse_path(get_qa_directory())
-
-    # Clear invalid session path to avoid repeated errors
-    if not has_valid_session:
-        session.pop('qa_directory', None)
-
+    qa_directory = get_qa_directory()
+    # Pass qa_directory and bids_mode to template (qa_directory may be None if not set)
     if args.debug:
-        print("Initial Browse Path:", initial_browse_path)
-        print("Has Valid Session:", has_valid_session)
-
+        print("QA Directory:", qa_directory)
     # Set session bids_mode from global at each page load to ensure consistency
     session['bids_mode'] = BIDS_MODE
     # Get previously entered user name from session (if any)
     user_name = session.get('user_name', '')
     qa_options = session.get('qa_options', ['yes', 'no', 'maybe'])
-    return render_template('root.html',
-        bids_mode=BIDS_MODE,
-        user_name=user_name,
-        qa_options=qa_options,
-        initial_browse_path=initial_browse_path,
-        has_valid_session=has_valid_session)
+    return render_template('root.html', qa_directory=qa_directory, bids_mode=BIDS_MODE, user_name=user_name, qa_options=qa_options)
 
 @app.route('/datasets', methods=['POST'])
 @require_qa_directory
@@ -1108,17 +986,12 @@ def render_montage(clicked_path, pipeline):
     # Check write permissions before proceeding
     can_write, file_issues, files_missing = check_write_permissions(pipeline_path)
     if not can_write:
-        try:
-            current_user = pwd.getpwuid(os.getuid()).pw_name
-        except KeyError:
-            current_user = str(os.getuid())
         return render_template('permission_error.html',
                                clicked_path=clicked_path,
                                pipeline=pipeline,
                                pipeline_path=str(pipeline_path),
                                file_issues=file_issues,
-                               files_missing=files_missing,
-                               current_user=current_user)
+                               files_missing=files_missing)
 
     pngs = [str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')]
     pngs = sorted(pngs)
@@ -1264,17 +1137,12 @@ def render_montage_standard():
     # Check write permissions before proceeding
     can_write, file_issues, files_missing = check_write_permissions(pipeline_path)
     if not can_write:
-        try:
-            current_user = pwd.getpwuid(os.getuid()).pw_name
-        except KeyError:
-            current_user = str(os.getuid())
         return render_template('permission_error.html',
                                clicked_path='',
                                pipeline='',
                                pipeline_path=str(pipeline_path),
                                file_issues=file_issues,
-                               files_missing=files_missing,
-                               current_user=current_user)
+                               files_missing=files_missing)
 
     pngs = sorted([str(x.relative_to(qa_directory)) for x in pipeline_path.glob('**/*.png')])
 
@@ -1425,29 +1293,11 @@ def _run_app(bids_mode=False):
     print(f"  {app_name} v{__version__}")
     print("=" * 50)
     print()
-    print("  Authors: Michael Kim, Yihao Liu, Gaurav Rudravaram")
+    print("  Authors: Michael Kim, Yihao Liu")
     print("  MASI Lab @ Vanderbilt University")
     print("  License: MIT")
     print()
-    print("  Homepage: https://github.com/MASILab/masi-qa")
-    print()
     print(f"  Mode: {mode_name}")
-    print()
-    print("  Expected directory structure:")
-    if BIDS_MODE:
-        print("    /root/")
-        print("    └── dataset/")
-        print("        └── pipeline/")
-        print("            ├── sub-XX_ses-YY_*.png")
-        print("            ├── QA.json  (auto-created)")
-        print("            └── QA.csv   (auto-created)")
-    else:
-        print("    /your/qa/directory/")
-        print("    ├── *.png")
-        print("    ├── subdir/  (subdirectories supported)")
-        print("    │   └── *.png")
-        print("    ├── QA.json  (auto-created)")
-        print("    └── QA.csv   (auto-created)")
 
     # Determine port
     if args.port:

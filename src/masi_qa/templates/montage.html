@@ -228,6 +228,21 @@
         #bgLoadStatus.hidden {
             display: none;
         }
+
+        /* Full-screen overlay canvas for the all-reviewed celebration.
+           pointer-events: none so it never blocks clicks on the UI underneath. */
+        #celebrationCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+        }
+        #celebrationCanvas.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -245,7 +260,7 @@
         </div>
         <button type="button" class="btn-back" onclick="saveAndGoBack()">
             <span>&#8592;</span>
-            <span>Save / Change Selection</span>
+            <span>Change Selection</span>
         </button>
     </div>
 
@@ -258,7 +273,7 @@
                 <div id="reviewProgressFill" class="review-progress-fill" style="width: 0%"></div>
             </div>
         </div>
-        <div id="allReviewedBanner" class="all-reviewed-banner hidden">All images have been reviewed! Click "Save / Change Selection" to save and exit.</div>
+        <div id="allReviewedBanner" class="all-reviewed-banner hidden">All images have been reviewed!</div>
     </div>
     <div id="imageMontage"></div>
     <div class="navigation-controls">
@@ -274,6 +289,9 @@
     <div class="loading-bar-container">
         <div id="loadingBar" class="loading-bar-progress"></div>
     </div>
+
+    <!-- Overlay canvas for the confetti + balloons celebration when all images are reviewed -->
+    <canvas id="celebrationCanvas" class="hidden"></canvas>
 
     <script>
         // Debug flag - set to true to enable console logging
@@ -362,6 +380,12 @@
             // to be loaded). This drives both the start-from-unreviewed jump and the
             // jump-to-next-unreviewed shortcut.
             unreviewedIndices = computeUnreviewedIndices();
+
+            // If the dataset is already fully reviewed when opened, mark the celebration
+            // as shown so it only fires on the live transition to complete, not on reopen.
+            if (unreviewedIndices.length === 0) {
+                celebrationShown = true;
+            }
 
             let initialIndices, backgroundIndices;
 
@@ -963,17 +987,143 @@
             const reviewed = total - unreviewedCount;
             const percentage = total > 0 ? (reviewed / total) * 100 : 0;
 
-            if (unreviewedCount === 0) {
+            if (unreviewedCount === 0 && total > 0) {
                 // All reviewed - show banner, hide progress
                 banner.classList.remove('hidden');
                 progress.classList.add('hidden');
+                // Fire the celebration once per completion transition.
+                if (!celebrationShown) {
+                    celebrationShown = true;
+                    launchCelebration();
+                }
             } else {
                 // Still reviewing - show progress, hide banner
                 banner.classList.add('hidden');
                 progress.classList.remove('hidden');
                 progressFill.style.width = percentage + '%';
                 progressText.textContent = reviewed + ' / ' + total + ' reviewed';
+                // Reset so re-completing the set (e.g. after a status change) celebrates again.
+                celebrationShown = false;
             }
+        }
+
+        // ---- All-reviewed celebration: confetti + balloons popping up from the bottom ----
+        let celebrationShown = false;       // True while the set is fully reviewed (prevents replay)
+        let celebrationRAF = null;          // requestAnimationFrame handle for the running animation
+
+        function launchCelebration() {
+            const canvas = document.getElementById('celebrationCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            resize();
+            canvas.classList.remove('hidden');
+
+            const W = () => canvas.width;
+            const H = () => canvas.height;
+            const colors = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#e67e22', '#1abc9c', '#ff69b4'];
+            const rand = (a, b) => a + Math.random() * (b - a);
+
+            // Confetti: bursts up from the bottom edge, then falls under gravity.
+            const confetti = [];
+            const CONFETTI_COUNT = 220;
+            for (let i = 0; i < CONFETTI_COUNT; i++) {
+                confetti.push({
+                    x: rand(0, W()),
+                    y: H() + rand(0, 40),
+                    vx: rand(-4, 4),
+                    vy: rand(-22, -11),       // strong upward launch
+                    size: rand(5, 11),
+                    color: colors[(Math.random() * colors.length) | 0],
+                    angle: rand(0, Math.PI * 2),
+                    spin: rand(-0.3, 0.3),
+                    delay: rand(0, 25)        // staggered launch (frames)
+                });
+            }
+
+            // Balloons: rise gently from the bottom and drift sideways.
+            const balloons = [];
+            const BALLOON_COUNT = 14;
+            for (let i = 0; i < BALLOON_COUNT; i++) {
+                balloons.push({
+                    x: rand(0.05, 0.95) * W(),
+                    y: H() + rand(40, 320),
+                    vy: rand(-2.4, -1.3),
+                    r: rand(22, 38),
+                    color: colors[(Math.random() * colors.length) | 0],
+                    sway: rand(0, Math.PI * 2),
+                    swaySpeed: rand(0.02, 0.05),
+                    swayAmp: rand(0.4, 1.2)
+                });
+            }
+
+            const GRAVITY = 0.35;
+            let frame = 0;
+            const MAX_FRAMES = 60 * 7; // ~7 seconds at 60fps
+
+            function draw() {
+                ctx.clearRect(0, 0, W(), H());
+
+                // Balloons
+                balloons.forEach(b => {
+                    b.sway += b.swaySpeed;
+                    b.y += b.vy;
+                    b.x += Math.sin(b.sway) * b.swayAmp;
+
+                    // String
+                    ctx.beginPath();
+                    ctx.moveTo(b.x, b.y + b.r);
+                    ctx.quadraticCurveTo(b.x + Math.sin(b.sway) * 8, b.y + b.r + 30, b.x, b.y + b.r + 55);
+                    ctx.strokeStyle = 'rgba(120,120,120,0.6)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+
+                    // Body
+                    ctx.beginPath();
+                    ctx.ellipse(b.x, b.y, b.r * 0.8, b.r, 0, 0, Math.PI * 2);
+                    ctx.fillStyle = b.color;
+                    ctx.fill();
+                    // Highlight
+                    ctx.beginPath();
+                    ctx.ellipse(b.x - b.r * 0.28, b.y - b.r * 0.32, b.r * 0.18, b.r * 0.28, -0.4, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.fill();
+                });
+
+                // Confetti
+                confetti.forEach(c => {
+                    if (frame < c.delay) return;
+                    c.vy += GRAVITY;
+                    c.x += c.vx;
+                    c.y += c.vy;
+                    c.angle += c.spin;
+
+                    ctx.save();
+                    ctx.translate(c.x, c.y);
+                    ctx.rotate(c.angle);
+                    ctx.fillStyle = c.color;
+                    ctx.fillRect(-c.size / 2, -c.size / 2, c.size, c.size * 0.6);
+                    ctx.restore();
+                });
+
+                frame++;
+                if (frame < MAX_FRAMES) {
+                    celebrationRAF = requestAnimationFrame(draw);
+                } else {
+                    ctx.clearRect(0, 0, W(), H());
+                    canvas.classList.add('hidden');
+                    window.removeEventListener('resize', resize);
+                    celebrationRAF = null;
+                }
+            }
+
+            window.addEventListener('resize', resize);
+            if (celebrationRAF) cancelAnimationFrame(celebrationRAF);
+            celebrationRAF = requestAnimationFrame(draw);
         }
 
         // Build a sorted array of unreviewed image indices from the QA dict.
@@ -1127,7 +1277,7 @@
                     if (backButton) {
                         backButton.style.opacity = '1';
                         backButton.style.cursor = 'pointer';
-                        backButton.querySelector('span:last-child').textContent = 'Save / Change Selection';
+                        backButton.querySelector('span:last-child').textContent = 'Change Selection';
                     }
                     if (confirm('Failed to save QA data. Leave anyway?')) {
                         window.location.href = '/';
